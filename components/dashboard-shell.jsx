@@ -37,11 +37,14 @@ function NavItem({ item, compact = false }) {
       _hover={{ bg: "rgba(148, 163, 184, 0.10)", color: "gray.50" }}
       transition="all 160ms ease"
       flex={compact ? "1" : undefined}
+      minW="0"
+      maxW="100%"
+      overflow="hidden"
     >
       <Link href={item.href}>
-        <HStack px={compact ? "3" : "4"} py="3" justify={compact ? "center" : "start"} gap="3">
-          <Box width="7" height="7" rounded="lg" bg={active ? "cyan.400" : "rgba(148, 163, 184, 0.14)"} color={active ? "gray.950" : "gray.200"} display="grid" placeItems="center"><NavGlyph name={item.label} /></Box>
-          <Text fontWeight="700" fontSize="sm">{item.label}</Text>
+        <HStack width="full" minW="0" px={compact ? "1" : "4"} py={compact ? "2" : "3"} flexDirection={compact ? "column" : "row"} justify={compact ? "center" : "start"} gap={compact ? "1" : "3"}>
+          <Box flexShrink="0" width="7" height="7" rounded="lg" bg={active ? "cyan.400" : "rgba(148, 163, 184, 0.14)"} color={active ? "gray.950" : "gray.200"} display="grid" placeItems="center"><NavGlyph name={item.label} /></Box>
+          <Text minW="0" maxW="full" textAlign="center" lineHeight="shorter" whiteSpace="normal" fontWeight="700" fontSize={compact ? "xs" : "sm"}>{item.label}</Text>
         </HStack>
       </Link>
     </Box>
@@ -143,7 +146,7 @@ function ShellContent({ children }) {
         </Flex>
 
         <Box display={{ base: "block", md: "none" }} px="4" pt="4">
-          <HStack bg="rgba(15, 23, 42, 0.66)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.16)" backdropFilter="blur(18px)" rounded="2xl" p="1" gap="1">
+          <HStack width="full" minW="0" overflow="hidden" bg="rgba(15, 23, 42, 0.66)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.16)" backdropFilter="blur(18px)" rounded="2xl" p="1" gap="1">
             {navItems.map(item => <NavItem key={item.href} item={item} compact />)}
           </HStack>
         </Box>
