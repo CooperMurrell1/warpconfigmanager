@@ -73,19 +73,23 @@ if [ "$running" != true ]; then
   message=vpn-container-not-running
 elif [ "$ACTION" = activate-config ]; then
   vpn_id=$(docker inspect --format '{{.Id}}' qbittorrentvpn 2>/dev/null || true)
-  vpn_project=$(docker inspect --format '{{if .Config.Labels}}{{index .Config.Labels "com.docker.compose.project"}}{{end}}' qbittorrentvpn 2>/dev/null || true)
-  if [ -z "$vpn_id" ] || [ -z "$vpn_project" ]; then
+  if [ -z "$vpn_id" ]; then
     ok=false
     message=vpn-container-metadata-unavailable
   else
     dependents=""
-    for container in $(docker ps --quiet); do
+    for container in $(docker ps --quiet --no-trunc); do
       [ "$container" != "$vpn_id" ] || continue
       network_mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$container" 2>/dev/null || true)
-      project=$(docker inspect --format '{{if .Config.Labels}}{{index .Config.Labels "com.docker.compose.project"}}{{end}}' "$container" 2>/dev/null || true)
-      if [ "$project" = "$vpn_project" ] && [ "$network_mode" = "container:$vpn_id" ]; then
-        dependents="$dependents $container"
-      fi
+      case "$network_mode" in
+        container:*)
+          namespace_ref=${network_mode#container:}
+          namespace_id=$(docker inspect --format '{{.Id}}' "$namespace_ref" 2>/dev/null || true)
+          if [ "$namespace_id" = "$vpn_id" ]; then
+            dependents="$dependents $container"
+          fi
+          ;;
+      esac
     done
 
     if ! docker restart --time 30 qbittorrentvpn >/dev/null 2>&1; then

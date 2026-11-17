@@ -38,8 +38,15 @@ install_new_or_identical() {
   if [ -e "$target" ] || [ -L "$target" ]; then
     [ ! -L "$target" ] || fail "$target is a symlink; it was left untouched"
     [ -f "$target" ] || fail "$target exists and is not a regular file; it was left untouched"
-    cmp -s "$source" "$target" || fail "$target already exists with different contents; it was left untouched"
-    echo "Keeping identical file $target"
+    if cmp -s "$source" "$target"; then
+      echo "Keeping identical file $target"
+    else
+      actual=$(stat -c '%u:%g:%a' "$target")
+      expected="0:0:$mode"
+      [ "$actual" = "$expected" ] || fail "$target differs and has owner/mode $actual; expected $expected. It was left untouched."
+      install -o root -g root -m "$mode" "$source" "$target"
+      echo "Updated $target"
+    fi
   else
     install -o root -g root -m "$mode" "$source" "$target"
     echo "Installed $target"

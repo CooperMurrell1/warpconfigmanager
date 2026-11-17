@@ -18,7 +18,7 @@ Portainer inspection found a jellyfin stack with qbittorrentvpn using the custom
 
 The manager joins the existing jellyfin default network for Jellyfin authentication and the existing NPM network for reverse proxy access. It does not join the VPN namespace. A narrowly scoped host helper activates a validated config and checks the public IP from inside qbittorrentvpn. The manager container has no Docker socket.
 
-After a successful config refresh, the helper restarts qbittorrentvpn and discovers its dependents from Docker metadata. It restarts only running containers in the same Compose project whose network mode is exactly `container:<qbittorrentvpn-id>`. Stopped services remain stopped, containers in other stacks are excluded, and unrelated services such as Jellyfin and Seerr are not restarted.
+After a successful config refresh, the helper restarts qbittorrentvpn and discovers every running container whose Docker network namespace resolves to qbittorrentvpn's container ID. This includes routed services across Compose projects; stopped services and unrelated containers are left alone.
 
 The default managed file is /config/wireguard/wg0.conf. The filename can be changed in the UI and is saved in SQLite. A new filename can only be selected if that existing file already contains a usable WireGuard config. Changing this setting does not rename or copy files and does not change the VPN container's config path. Before selecting another name, make sure the VPN container is configured to load it. After selection, future generated files are installed at that filename.
 
@@ -60,7 +60,7 @@ The host setup script and the stack service are separate one-time steps. After b
 
 ## Applying an update
 
-The updater installs a validated config atomically with mode 0600 and saves the previous usable file as *.last-good. It then asks the host helper to restart qbittorrentvpn, waits for it to become ready, restarts only its running namespace-bound dependents, and verifies that the expected WireGuard public key is loaded. The update history records each attempt and a safe error summary.
+The updater installs a validated config atomically with mode 0600 and saves the previous usable file as *.last-good. It then asks the host helper to restart qbittorrentvpn, waits for it to become ready, restarts every running namespace-bound dependent, and verifies that the expected WireGuard public key is loaded. The update history records each attempt and a safe error summary.
 
 Generation or validation failures leave the active config and running tunnel untouched. If activation fails and a previous usable config exists, the manager restores it and asks the helper to reactivate it. When no previous config exists, the validated candidate is left installed for recovery rather than deleted. The helper does not restart Jellyfin, Seerr, databases, reverse proxies, or any container outside the qBittorrentVPN network namespace.
 

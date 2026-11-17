@@ -131,7 +131,7 @@ export default function ConfigPage() {
         </GlassCard>
 
         <Alert.Root status="warning" rounded="2xl" bg="rgba(120, 53, 15, 0.48)" borderWidth="1px" borderColor="rgba(251, 146, 60, 0.25)" color="orange.50" p="5">
-          <Alert.Indicator /><Box><Alert.Title>Routing and exit-IP warning</Alert.Title><Alert.Description color="orange.100" mt="1">Activating a different profile can change the public exit IP and routing behavior. The manager restarts qBittorrentVPN and only running services in the same Compose project that share its network namespace.</Alert.Description></Box>
+          <Alert.Indicator /><Box><Alert.Title>Routing and exit-IP warning</Alert.Title><Alert.Description color="orange.100" mt="1">Activating a different profile can change the public exit IP and routing. qBittorrentVPN and every running container that shares its network namespace will restart.</Alert.Description></Box>
         </Alert.Root>
       </Stack>
 
