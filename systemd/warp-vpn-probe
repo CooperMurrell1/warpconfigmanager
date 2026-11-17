@@ -161,62 +161,6 @@ portainer_path_to_host() {
     '
 }
 
-compose_force_recreate_service() {
-  cfr_project="$cdc_project"
-  cfr_service="$cdc_service"
-  cfr_project_dir="$cdc_project_dir"
-  cfr_files="$cdc_files"
-  set --
-  cfr_remaining="$cfr_files"
-  while :; do
-    case "$cfr_remaining" in
-      *,*) cfr_file=${cfr_remaining%%,*}; cfr_remaining=${cfr_remaining#*,} ;;
-      *) cfr_file=$cfr_remaining; cfr_remaining="" ;;
-    esac
-    [ -n "$cfr_file" ] || return 1
-    set -- "$@" -f "$cfr_file"
-    [ -n "$cfr_remaining" ] || break
-  done
-  log "recreating Compose service $cfr_project/$cfr_service from its source config with project name $cfr_project"
-  if docker compose version >/dev/null 2>&1; then
-    if docker compose --project-name "$cfr_project" --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service"; then
-      :
-    else
-      cfr_status=$?
-      log "docker compose up failed for $cfr_project/$cfr_service with exit code $cfr_status"
-      return 1
-    fi
-  elif command -v docker-compose >/dev/null 2>&1; then
-    if docker-compose --project-name "$cfr_project" --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service"; then
-      :
-    else
-      cfr_status=$?
-      log "docker-compose up failed for $cfr_project/$cfr_service with exit code $cfr_status"
-      return 1
-    fi
-  else
-    return 1
-  fi
-
-  cfr_ids=$(docker ps --all --quiet --no-trunc \
-    --filter "label=com.docker.compose.project=$cfr_project" \
-    --filter "label=com.docker.compose.service=$cfr_service")
-  [ -n "$cfr_ids" ] || {
-    log "Compose reported success but no containers exist for $cfr_project/$cfr_service"
-    return 1
-  }
-  cfr_failed=false
-  for cfr_id in $cfr_ids; do
-    cfr_running=$(docker inspect --format '{{.State.Running}}' "$cfr_id" 2>/dev/null || true)
-    cfr_mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$cfr_id" 2>/dev/null || true)
-    cfr_namespace_id=""
-    case "$cfr_mode" in container:*) cfr_namespace_id=$(docker inspect --format '{{.Id}}' "${cfr_mode#container:}" 2>/dev/null || true) ;; esac
-    log "post-recreate check service=$cfr_project/$cfr_service id=$cfr_id running=$cfr_running network_mode=${cfr_mode:-unavailable} namespace_id=${cfr_namespace_id:-unresolved} expected_vpn_id=$vpn_id"
-    if [ "$cfr_running" != true ] || [ "$cfr_namespace_id" != "$vpn_id" ]; then cfr_failed=true; fi
-  done
-  [ "$cfr_failed" = false ]
-}
-
 running=$(docker inspect --format '{{.State.Running}}' qbittorrentvpn 2>/dev/null || true)
 if [ "$running" != true ]; then
   ok=false
@@ -295,61 +239,28 @@ elif [ "$ACTION" = activate-config ]; then
           message=no-routed-containers-found
           log "warning: no dependent containers matched; continuing config activation and WireGuard key verification"
         fi
-        processed_services=""
-        processed_containers=""
         restart_failed=false
         for container in $dependents; do
-          case " $processed_containers " in
-            *" $container "*) log "container id=$container was already handled as part of a Compose service recreation"; continue ;;
-          esac
-          if compose_declares_vpn_network "$container"; then
-            service_key="$compose_project/$cdc_service"
-            case " $processed_services " in
-              *" $service_key "*) log "Compose service $service_key was already recreated; skipping duplicate container entry" ;;
-              *)
-                processed_services="$processed_services $service_key"
-                service_container_count=0
-                for related in $dependents; do
-                  related_project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$related" 2>/dev/null || true)
-                  related_service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$related" 2>/dev/null || true)
-                  if [ "$related_project/$related_service" = "$service_key" ]; then
-                    service_container_count=$((service_container_count + 1))
-                    processed_containers="$processed_containers $related"
-                  fi
-                done
-                [ "$service_container_count" -gt 0 ] || service_container_count=1
-                if compose_force_recreate_service; then
-                  restarted_count=$((restarted_count + service_container_count))
-                  log "Compose service $service_key recreated successfully; containers=$service_container_count"
-                else
-                  restart_failed=true
-                  dependent_failed_count=$((dependent_failed_count + service_container_count))
-                  log "Compose service $service_key failed to recreate from its source config"
-                fi
-                ;;
-            esac
-          else
-            dependent_running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)
-            if [ "$dependent_running" = true ]; then
-              log "restarting routed dependent without readable Compose config id=$container"
-              if docker restart --time 15 "$container" >/dev/null 2>&1; then
-                restarted_count=$((restarted_count + 1))
-                log "restart succeeded for routed dependent id=$container"
-              else
-                restart_failed=true
-                dependent_failed_count=$((dependent_failed_count + 1))
-                log "restart failed for routed dependent id=$container"
-              fi
+          dependent_running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)
+          if [ "$dependent_running" = true ]; then
+            log "restarting existing routed container without replacing its Compose definition or mounts id=$container"
+            if docker restart --time 15 "$container" >/dev/null 2>&1; then
+              restarted_count=$((restarted_count + 1))
+              log "restart succeeded for routed dependent id=$container"
             else
-              log "starting stopped routed dependent without readable Compose config id=$container"
-              if docker start "$container" >/dev/null 2>&1; then
-                restarted_count=$((restarted_count + 1))
-                log "start succeeded for routed dependent id=$container"
-              else
-                restart_failed=true
-                dependent_failed_count=$((dependent_failed_count + 1))
-                log "start failed for routed dependent id=$container"
-              fi
+              restart_failed=true
+              dependent_failed_count=$((dependent_failed_count + 1))
+              log "restart failed for routed dependent id=$container"
+            fi
+          else
+            log "starting existing stopped routed container without replacing its Compose definition or mounts id=$container"
+            if docker start "$container" >/dev/null 2>&1; then
+              restarted_count=$((restarted_count + 1))
+              log "start succeeded for routed dependent id=$container"
+            else
+              restart_failed=true
+              dependent_failed_count=$((dependent_failed_count + 1))
+              log "start failed for routed dependent id=$container"
             fi
           fi
         done
