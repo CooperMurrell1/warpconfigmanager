@@ -13,6 +13,9 @@ services:
     cap_drop:
       - ALL
     cap_add:
+      # Required only for atomic replacement when the existing VPN directory
+      # is owned by the VPN container's PUID rather than root.
+      - DAC_OVERRIDE
       - SETUID
       - SETGID
     security_opt:

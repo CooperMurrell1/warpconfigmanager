@@ -46,7 +46,7 @@ If /opt/warp-manager/data, /opt/warp-manager/control, /opt/warp-manager/ui-comma
 
 ## Add one service to the existing Portainer stack
 
-The Compose fragment has no runtime environment variables and uses long bind mounts with create_host_path disabled, so Docker will not silently create missing host paths.
+The Compose fragment has no runtime environment variables and uses long bind mounts with create_host_path disabled, so Docker will not silently create missing host paths. The container drops every capability and adds back only `SETUID`, `SETGID`, and `DAC_OVERRIDE`. `DAC_OVERRIDE` is required because existing VPN config directories are commonly owned by the VPN container's PUID; without it, container UID 0 can read the bind mount but cannot atomically replace `wg0.conf` after all capabilities are dropped. The root filesystem remains read-only, the app has no Docker socket, and its writable mounts remain explicitly scoped.
 
 A GitHub Actions workflow builds and pushes ghcr.io/coopermurrell1/warpconfigmanager:latest after changes land on main. If the repository/package is private, configure Portainer's GHCR registry credentials with a GitHub token that has read:packages. Keep that token in Portainer only.
 
@@ -85,6 +85,7 @@ To recover, restore those files and permissions, then start the existing jellyfi
 
 - If Portainer cannot pull the image, check GHCR read:packages registry credentials.
 - If the manager exits during startup, check the required host directories exist and match the documented ownership and permissions.
+- If an update reports a permission error, confirm `/config/wireguard` is mounted read-write and that the deployed service includes `DAC_OVERRIDE` under `cap_add`. Pull the newest image and recreate the container after changing Compose.
 - If Jellyfin login fails, confirm the manager and Jellyfin share jellyfin_default and Jellyfin is reachable at http://jellyfin:8096.
 - If NPM cannot reach the dashboard, confirm both containers use nginx-proxy-manager_default and the proxy target is warp-config-manager:3000.
 - If the public IP is unavailable, check `systemctl status warp-vpn-manager.path warp-vpn-manager.service`, confirm the Docker CLI can inspect and exec into qbittorrentvpn, and verify curl or wget is present in that container.
