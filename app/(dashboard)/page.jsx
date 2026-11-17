@@ -41,6 +41,11 @@ export default function HomePage() {
           <Text color={state?.ip?.error ? "red.200" : "gray.300"} mt="4">
             {state?.ip?.error || `Checked ${when(state?.ip?.checked_at)}`}
           </Text>
+          <SimpleGrid columns={{ base: 1, sm: 3 }} gap="4" mt="6" pt="4" borderTopWidth="1px" borderColor="rgba(148, 163, 184, 0.18)">
+            <Box><Text color="gray.500" fontSize="xs">WARP ACCOUNT</Text><Text color="gray.100" fontSize="sm" mt="1">{state?.warp_account?.account_type || "Not collected"}</Text></Box>
+            <Box><Text color="gray.500" fontSize="xs">ACCOUNT ID</Text><Text color="gray.200" fontSize="sm" mt="1" fontFamily="mono" overflowWrap="anywhere">{state?.warp_account?.account_id || "Not available"}</Text></Box>
+            <Box><Text color="gray.500" fontSize="xs">WARP DEVICE ID</Text><Text color="gray.200" fontSize="sm" mt="1" fontFamily="mono" overflowWrap="anywhere">{state?.warp_account?.device_id || "Not available"}</Text></Box>
+          </SimpleGrid>
         </GlassCard>
 
         <GlassCard p="6">

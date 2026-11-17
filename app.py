@@ -101,9 +101,9 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_service_logs_id ON service_logs(id DESC)")
         conn.execute("CREATE TABLE IF NOT EXISTS generator_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, source TEXT NOT NULL, result TEXT NOT NULL, details TEXT NOT NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_generator_logs_id ON generator_logs(id DESC)")
-        conn.execute("CREATE TABLE IF NOT EXISTS saved_configs (id TEXT PRIMARY KEY, filename TEXT NOT NULL, saved_at TEXT NOT NULL, expires_at TEXT NOT NULL, sha256 TEXT UNIQUE NOT NULL, address TEXT NOT NULL, endpoint TEXT NOT NULL, account_type TEXT, account_id TEXT, device_id TEXT, account_created_at TEXT, account_expires_at TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS saved_configs (id TEXT PRIMARY KEY, filename TEXT NOT NULL, saved_at TEXT NOT NULL, expires_at TEXT NOT NULL, sha256 TEXT UNIQUE NOT NULL, address TEXT NOT NULL, endpoint TEXT NOT NULL, account_type TEXT, account_id TEXT, device_id TEXT, account_created_at TEXT, account_expires_at TEXT, interface_public_key TEXT)")
         saved_columns = {row["name"] for row in conn.execute("PRAGMA table_info(saved_configs)").fetchall()}
-        for column in ("account_type", "account_id", "device_id", "account_created_at", "account_expires_at"):
+        for column in ("account_type", "account_id", "device_id", "account_created_at", "account_expires_at", "interface_public_key"):
             if column not in saved_columns:
                 conn.execute("ALTER TABLE saved_configs ADD COLUMN " + column + " TEXT")
         conn.commit()
@@ -327,7 +327,7 @@ def load_state():
         state["history"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,result,source,error,duration_seconds FROM update_history ORDER BY id DESC LIMIT 100").fetchall()][::-1]
         state["logs"] = [dict(r) for r in conn.execute("SELECT at,level,message FROM service_logs ORDER BY id DESC LIMIT 200").fetchall()][::-1]
         state["generator_logs"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,source,result,details FROM generator_logs ORDER BY id DESC LIMIT 100").fetchall()][::-1]
-        state["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+        state["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
     state["interval_seconds"] = max(MIN_INTERVAL, min(MAX_INTERVAL, int(state.get("interval_seconds", INTERVAL_DEFAULT))))
     try:
         state["config_retention_seconds"] = max(3600, min(365 * 86400, int(state.get("config_retention_seconds", 30 * 86400))))
@@ -476,6 +476,8 @@ def add_generator_log(started_at, source, result, details, finished_at=None):
 def archive_config(text, filename=None, account_info=None):
     try:
         details = parse_config(text)
+        try: public_key = interface_public_key(text)
+        except (OSError, RuntimeError, subprocess.SubprocessError): public_key = None
         import hashlib
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         ARCHIVE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -486,17 +488,17 @@ def archive_config(text, filename=None, account_info=None):
             account = account_info or STATE.get("warp_account") or {}
             existing = conn.execute("SELECT id FROM saved_configs WHERE sha256=?", (digest,)).fetchone()
             if existing:
-                conn.execute("UPDATE saved_configs SET account_type=COALESCE(account_type,?),account_id=COALESCE(account_id,?),device_id=COALESCE(device_id,?),account_created_at=COALESCE(account_created_at,?),account_expires_at=COALESCE(account_expires_at,?) WHERE id=?",
-                             (account.get("account_type"), account.get("account_id"), account.get("device_id"), account.get("created_at"), account.get("expires_at"), existing["id"]))
+                conn.execute("UPDATE saved_configs SET account_type=COALESCE(account_type,?),account_id=COALESCE(account_id,?),device_id=COALESCE(device_id,?),account_created_at=COALESCE(account_created_at,?),account_expires_at=COALESCE(account_expires_at,?),interface_public_key=COALESCE(interface_public_key,?) WHERE id=?",
+                             (account.get("account_type"), account.get("account_id"), account.get("device_id"), account.get("created_at"), account.get("expires_at"), public_key, existing["id"]))
                 conn.commit()
-                STATE["saved_configs"] = [dict(row) for row in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+                STATE["saved_configs"] = [dict(row) for row in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
                 write_public_state(STATE)
                 return
             config_id = secrets.token_hex(16)
             atomic_write(ARCHIVE_DIR / (config_id + ".conf"), text, 0o600)
-            conn.execute("INSERT INTO saved_configs(id,filename,saved_at,expires_at,sha256,address,endpoint,account_type,account_id,device_id,account_created_at,account_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            conn.execute("INSERT INTO saved_configs(id,filename,saved_at,expires_at,sha256,address,endpoint,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          (config_id, filename or STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), saved, expires, digest, details["address"], details["endpoint"],
-                          account.get("account_type"), account.get("account_id"), account.get("device_id"), account.get("created_at"), account.get("expires_at")))
+                          account.get("account_type"), account.get("account_id"), account.get("device_id"), account.get("created_at"), account.get("expires_at"), public_key))
             conn.commit()
         prune_archives()
     except Exception as exc:
@@ -515,7 +517,7 @@ def prune_archives():
             except FileNotFoundError: pass
         if ids: conn.executemany("DELETE FROM saved_configs WHERE id=?", [(item,) for item in ids])
         conn.commit()
-        STATE["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+        STATE["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
     write_public_state(STATE)
 
 
@@ -630,9 +632,15 @@ def _run_update_locked(source):
         add_run_detail("Running pinned WARP generator with verbose diagnostics")
         candidate, account = generate_candidate(dict(STATE.get("warp_settings", DEFAULT_WARP_SETTINGS)))
         add_run_detail("Generator returned configuration output")
+        if account:
+            for label, key in (("WARP account type", "account_type"), ("WARP account ID", "account_id"),
+                               ("WARP device ID", "device_id"), ("WARP account created", "created_at"),
+                               ("WARP account expiry", "expires_at")):
+                if account.get(key): add_run_detail(label + ": " + str(account[key])[:128])
         validate_config(candidate)
         add_run_detail("WireGuard configuration validation passed")
         candidate_key = interface_public_key(candidate)
+        add_run_detail("WireGuard interface public key: " + candidate_key)
         add_run_detail("Derived expected tunnel public key (value hidden)")
         if previous is not None:
             archive_config(previous)
