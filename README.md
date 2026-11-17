@@ -18,7 +18,7 @@ Portainer inspection found a jellyfin stack with qbittorrentvpn using the custom
 
 The manager joins the existing jellyfin default network for Jellyfin authentication and the existing NPM network for reverse proxy access. It does not join the VPN namespace. A narrowly scoped host helper activates a validated config and checks the public IP from inside qbittorrentvpn. The manager container has no Docker socket.
 
-After a successful config refresh, the helper restarts qbittorrentvpn and discovers every container whose effective Docker network mode resolves to `network_mode: service:qbittorrentvpn` (Docker reports this as `container:<qbittorrentvpn-id>`). It restarts matching running containers and starts matching stopped containers, including dependents in other Compose projects. Unrelated containers are left alone.
+After a successful config refresh, the helper checks each Compose-managed container's source project config and selects services with `network_mode: service:qbittorrentvpn`. It also verifies Docker's resolved network namespace for running containers. Matching running containers are restarted and matching stopped containers are started, including dependents in other Compose projects. Unrelated containers are left alone.
 
 The default managed file is /config/wireguard/wg0.conf. The filename can be changed in the UI and is saved in SQLite. A new filename can only be selected if that existing file already contains a usable WireGuard config. Changing this setting does not rename or copy files and does not change the VPN container's config path. Before selecting another name, make sure the VPN container is configured to load it. After selection, future generated files are installed at that filename.
 
@@ -36,7 +36,7 @@ From a checkout of this repository on the Docker host, run:
 sudo sh ./host-setup.sh
 ~~~
 
-This creates persistent app directories, installs the root-run `warp-vpn-manager.path` systemd unit, and enables it. The helper accepts only config activation and tunnel-probe requests for qbittorrentvpn. Its activation path can restart qbittorrentvpn and the namespace-bound services described above; it cannot update or recreate the Compose stack. The Docker socket is never mounted into the app container.
+This creates persistent app directories, installs the root-run `warp-vpn-manager.path` systemd unit, and enables it. Host setup requires Docker Compose and Python 3 so the helper can read the rendered service config. The helper accepts only config activation and tunnel-probe requests for qbittorrentvpn. Its activation path can restart qbittorrentvpn and the namespace-bound services described above; it cannot update or recreate the Compose stack. The Docker socket is never mounted into the app container.
 
 The manager unit uses versioned `warp-vpn-manager` filenames and a separate control request, so installing it does not overwrite an older `warp-vpn-probe` helper. An older probe unit may remain installed but idle.
 

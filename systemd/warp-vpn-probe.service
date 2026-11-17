@@ -9,6 +9,6 @@ Group=root
 ExecStart=/usr/local/sbin/warp-vpn-manager
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectHome=true
+ProtectHome=read-only
 ProtectSystem=strict
 ReadWritePaths=/opt/warp-manager/control/warp-config-manager

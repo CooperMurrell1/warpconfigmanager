@@ -754,6 +754,8 @@ def host_request(action, expected_public_key=None):
                         result["message"] = friendly_host_message(result["message"])
                     if action == "activate-config" and isinstance(result.get("dependent_count"), int):
                         dependent_ids = [value for value in result.get("dependent_ids", "").split(",") if re.fullmatch(r"[a-f0-9]{64}", value)]
+                        dependent_names = [value for value in result.get("dependent_names", "").split(",") if value]
+                        dependent_services = [value for value in result.get("dependent_services", "").split(",") if value]
                         dependent_failed = int(result.get("dependent_failed_count", 0))
                         restarted_total = int(result.get("restarted_count", 0))
                         summary = "Host restart summary: matched %d routed container(s); restarted or started %d total container(s); dependent restart failures=%d; container IDs=%s." % (result["dependent_count"], restarted_total, dependent_failed, ",".join(dependent_ids) or "none")
@@ -765,6 +767,8 @@ def host_request(action, expected_public_key=None):
                             "Routed dependents discovered: %d" % result["dependent_count"],
                             "Dependent restart failures: %d" % dependent_failed,
                             "Discovered container IDs: %s" % (", ".join(dependent_ids) or "none"),
+                            "Discovered container names: %s" % (", ".join(dependent_names) or "none"),
+                            "Matched Compose services: %s" % (", ".join(dependent_services) or "none"),
                             "Host helper message: %s" % str(result.get("message") or "No message returned")[:500],
                             "Discovery matches containers sharing the VPN container network namespace.",
                             "Host journal: journalctl -u warp-vpn-manager.service",

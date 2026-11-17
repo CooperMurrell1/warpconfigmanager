@@ -59,6 +59,10 @@ install_new_or_identical() {
 [ -d /opt/wireguard ] || fail "/opt/wireguard does not exist; this setup will not create or modify the VPN config directory"
 
 command -v docker >/dev/null 2>&1 || fail "Docker CLI is required"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required to read Docker Compose's rendered service config"
+if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+  fail "Docker Compose is required so the host helper can find network_mode: service:qbittorrentvpn services"
+fi
 command -v systemctl >/dev/null 2>&1 || fail "systemd is required"
 docker inspect qbittorrentvpn >/dev/null 2>&1 || fail "Existing qbittorrentvpn container was not found"
 getent group 1000 >/dev/null 2>&1 || fail "Group ID 1000 is required by the node process"

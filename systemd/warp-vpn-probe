@@ -26,6 +26,8 @@ restarted_count=0
 dependent_count=0
 dependent_failed_count=0
 dependent_ids=""
+dependent_names=""
+dependent_services=""
 if [ -n "$EXPECTED_KEY" ]; then config_loaded=false; fi
 
 probe_ip() {
@@ -80,6 +82,46 @@ key_is_loaded() {
   return 1
 }
 
+compose_declares_vpn_network() {
+  cdc_container="$1"
+  cdc_service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$cdc_container" 2>/dev/null || true)
+  cdc_project_dir=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$cdc_container" 2>/dev/null || true)
+  cdc_files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$cdc_container" 2>/dev/null || true)
+  case "$cdc_service:$cdc_project_dir:$cdc_files" in *'<no value>'*|::*|*::)
+    [ -n "$cdc_service" ] && log "Compose config lookup unavailable for container=$cdc_container: project labels are incomplete"
+    return 1
+    ;;
+  esac
+  [ -n "$cdc_service" ] && [ -n "$cdc_project_dir" ] && [ -n "$cdc_files" ] || return 1
+
+  set --
+  cdc_remaining="$cdc_files"
+  while :; do
+    case "$cdc_remaining" in
+      *,*) cdc_file=${cdc_remaining%%,*}; cdc_remaining=${cdc_remaining#*,} ;;
+      *) cdc_file=$cdc_remaining; cdc_remaining="" ;;
+    esac
+    [ -n "$cdc_file" ] || return 1
+    set -- "$@" -f "$cdc_file"
+    [ -n "$cdc_remaining" ] || break
+  done
+
+  cdc_match=""
+  if docker compose version >/dev/null 2>&1; then
+    cdc_match=$(docker compose --project-directory "$cdc_project_dir" "$@" config --format json 2>/dev/null |
+      python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get("services",{}).get(sys.argv[1],{}); print("match" if s.get("network_mode") == "service:qbittorrentvpn" else "no-match")' "$cdc_service" 2>/dev/null || true)
+  elif command -v docker-compose >/dev/null 2>&1; then
+    cdc_match=$(docker-compose --project-directory "$cdc_project_dir" "$@" config --format json 2>/dev/null |
+      python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get("services",{}).get(sys.argv[1],{}); print("match" if s.get("network_mode") == "service:qbittorrentvpn" else "no-match")' "$cdc_service" 2>/dev/null || true)
+  else
+    log "Compose config lookup unavailable for container=$cdc_container: Docker Compose command not found"
+    return 1
+  fi
+  if [ "$cdc_match" = match ]; then return 0; fi
+  log "Compose config did not confirm network_mode=service:qbittorrentvpn for project=$compose_project service=$cdc_service (render result=${cdc_match:-unavailable})"
+  return 1
+}
+
 running=$(docker inspect --format '{{.State.Running}}' qbittorrentvpn 2>/dev/null || true)
 if [ "$running" != true ]; then
   ok=false
@@ -100,16 +142,25 @@ elif [ "$ACTION" = activate-config ]; then
       network_mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$container" 2>/dev/null || true)
       container_name=$(docker inspect --format '{{.Name}}' "$container" 2>/dev/null || true)
       container_pid=$(docker inspect --format '{{.State.Pid}}' "$container" 2>/dev/null || true)
+      compose_service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$container" 2>/dev/null || true)
+      compose_project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container" 2>/dev/null || true)
       container_netns=""
       case "$container_pid" in ''|0|*[!0-9]*) ;; *) container_netns=$(readlink "/proc/$container_pid/ns/net" 2>/dev/null || true) ;; esac
-      log "examining container name=${container_name#/} id=$container network_mode=${network_mode:-unavailable} pid=${container_pid:-unavailable} netns=${container_netns:-unavailable}"
+      log "examining container name=${container_name#/} id=$container compose_project=${compose_project:-unavailable} compose_service=${compose_service:-unavailable} network_mode=${network_mode:-unavailable} pid=${container_pid:-unavailable} netns=${container_netns:-unavailable}"
       matched=false
+      if compose_declares_vpn_network "$container"; then
+        matched=true
+        log "container name=${container_name#/} id=$container matched from Compose config: service=${compose_service} network_mode=service:qbittorrentvpn project=${compose_project}"
+      fi
       case "$network_mode" in
         container:*)
           namespace_ref=${network_mode#container:}
           namespace_id=$(docker inspect --format '{{.Id}}' "$namespace_ref" 2>/dev/null || true)
           log "container=${container_name#/} id=$container network_mode=$network_mode namespace_id=${namespace_id:-unresolved}"
-          if [ "$namespace_id" = "$vpn_id" ] || [ "$namespace_ref" = "$vpn_id" ] || [ "$namespace_ref" = "qbittorrentvpn" ] || [ "$namespace_ref" = "/qbittorrentvpn" ]; then matched=true; fi
+          if [ "$namespace_id" = "$vpn_id" ] || [ "$namespace_ref" = "$vpn_id" ] || [ "$namespace_ref" = "qbittorrentvpn" ] || [ "$namespace_ref" = "/qbittorrentvpn" ]; then
+            matched=true
+            log "container name=${container_name#/} id=$container matched from Docker's resolved network mode $network_mode"
+          fi
           ;;
         *) log "container name=${container_name#/} id=$container does not share a container network namespace" ;;
       esac
@@ -121,6 +172,10 @@ elif [ "$ACTION" = activate-config ]; then
         dependents="$dependents $container"
         dependent_count=$((dependent_count + 1))
         if [ -n "$dependent_ids" ]; then dependent_ids="$dependent_ids,$container"; else dependent_ids="$container"; fi
+        dependent_name=${container_name#/}
+        if [ -n "$dependent_names" ]; then dependent_names="$dependent_names,$dependent_name"; else dependent_names="$dependent_name"; fi
+        dependent_service="${compose_project:-unknown}/${compose_service:-unknown}"
+        if [ -n "$dependent_services" ]; then dependent_services="$dependent_services,$dependent_service"; else dependent_services="$dependent_service"; fi
         log "matched routed dependent name=${container_name#/} id=$container running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)"
       else
         log "container name=${container_name#/} id=$container was not matched to qBittorrentVPN"
@@ -210,8 +265,8 @@ fi
 
 umask 077
 tmp=$(mktemp "$CONTROL/.result.XXXXXX")
-printf '{"id":"%s","ok":%s,"message":"%s","ip":"%s","config_loaded":%s,"restarted_count":%s,"dependent_count":%s,"dependent_failed_count":%s,"dependent_ids":"%s","finished_at":"%s"}\n' \
-  "$ID" "$ok" "$message" "$ip" "$config_loaded" "$restarted_count" "$dependent_count" "$dependent_failed_count" "$dependent_ids" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
-log "request complete id=$ID ok=$ok message=$message vpn_restarted=$restarted_count dependents_matched=$dependent_count dependents_failed=$dependent_failed_count dependent_ids=${dependent_ids:-none}"
+printf '{"id":"%s","ok":%s,"message":"%s","ip":"%s","config_loaded":%s,"restarted_count":%s,"dependent_count":%s,"dependent_failed_count":%s,"dependent_ids":"%s","dependent_names":"%s","dependent_services":"%s","finished_at":"%s"}\n' \
+  "$ID" "$ok" "$message" "$ip" "$config_loaded" "$restarted_count" "$dependent_count" "$dependent_failed_count" "$dependent_ids" "$dependent_names" "$dependent_services" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+log "request complete id=$ID ok=$ok message=$message vpn_restarted=$restarted_count dependents_matched=$dependent_count dependents_failed=$dependent_failed_count dependent_ids=${dependent_ids:-none} dependent_names=${dependent_names:-none} dependent_services=${dependent_services:-none}"
 chmod 0600 "$tmp"
 mv -f "$tmp" "$RESULT"
