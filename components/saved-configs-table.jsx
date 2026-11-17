@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Badge, Box, Button, Dialog, HStack, Input, Portal, Stack, Text } from "@chakra-ui/react";
 import { useDashboard, when } from "@/components/dashboard-context";
 import { GlassCard } from "@/components/dashboard-ui";
+import { DashboardTable } from "@/components/dashboard-table";
 
 function csrf() {
   const item = document.cookie.split("; ").find(value => value.startsWith("warp_csrf="));
@@ -22,20 +23,25 @@ function ActionIcon({ kind }) {
 
 export function SavedConfigsTable({ selectedId, onSelect }) {
   const { state } = useDashboard();
-  const configs = [...(state?.saved_configs || [])].sort((a, b) => {
-    const activeA = a.interface_public_key && a.interface_public_key === state?.config?.interface_public_key;
-    const activeB = b.interface_public_key && b.interface_public_key === state?.config?.interface_public_key;
-    return Number(activeB) - Number(activeA) || new Date(b.saved_at) - new Date(a.saved_at);
-  });
-  return <GlassCard p="3"><Stack gap="2">
-    {configs.length ? configs.map(item => {
-      const active = item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key;
-      return <Box key={item.id} role="button" tabIndex={0} aria-pressed={selectedId === item.id} cursor="pointer" onClick={() => onSelect(item.id)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(item.id); } }} p="3" rounded="xl" borderWidth="1px" borderColor={selectedId === item.id ? "cyan.300" : "whiteAlpha.200"} bg={selectedId === item.id || active ? "rgba(8,145,178,.16)" : "rgba(15,23,42,.4)"} _hover={{ bg: "rgba(8,145,178,.24)", borderColor: "cyan.400" }} _focusVisible={{ outline: "2px solid", outlineColor: "cyan.300" }}>
-        <HStack justify="space-between" gap="2"><Text minW="0" whiteSpace="normal" color="gray.100" fontWeight="700">{item.name || "Untitled Config"}</Text>{active && <Badge colorPalette="cyan">Active</Badge>}</HStack>
-        <Text color="gray.400" fontSize="xs" mt="1">{when(item.saved_at)}</Text>
-      </Box>;
-    }) : <Text color="gray.400" p="2">No saved configs yet.</Text>}
-  </Stack></GlassCard>;
+  const configs = (state?.saved_configs || []).map(item => ({
+    ...item,
+    active: Boolean(item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key),
+  }));
+  const columns = [
+    { key: "name", label: "Config", sortValue: item => item.name || "Untitled Config", render: item => <Text color="gray.100" fontWeight="700">{item.name || "Untitled Config"}</Text> },
+    { key: "saved_at", label: "Saved", sortValue: item => new Date(item.saved_at).getTime() || 0, render: item => when(item.saved_at) },
+    { key: "status", label: "Status", sortValue: item => item.active ? "active" : item.last_status || "saved", render: item => item.active ? <Badge colorPalette="cyan">Active</Badge> : <Badge colorPalette={item.last_status === "failed" ? "red" : "gray"}>{item.last_status || "Saved"}</Badge> },
+  ];
+  return <GlassCard p="3"><DashboardTable
+    rows={configs}
+    columns={columns}
+    rowKey={item => item.id}
+    initialSort="saved_at"
+    initialDirection="desc"
+    onRowClick={item => onSelect(item.id)}
+    selectedKey={selectedId}
+    emptyMessage="No saved configs yet."
+  /></GlassCard>;
 }
 
 export function SavedConfigActions({ config, onDeleted }) {

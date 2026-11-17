@@ -9,7 +9,7 @@ export async function GET(request) {
   if (auth.response) return auth.response;
   try {
     const state = JSON.parse(await fs.readFile("/data/public-state.json", "utf8"));
-    return NextResponse.json({ ...state, current_user: auth.session.username, current_user_is_admin: auth.session.isAdmin === true }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ...state, current_user: auth.session.username, current_user_id: auth.session.userId, current_user_is_admin: auth.session.isAdmin === true }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ error: "Service state is not ready" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
