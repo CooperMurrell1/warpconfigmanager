@@ -42,7 +42,9 @@ install_new_or_identical() {
       echo "Keeping identical file $target"
     else
       actual=$(stat -c '%u:%g:%a' "$target")
-      expected="0:0:$mode"
+      normalized_mode="$mode"
+      case "$normalized_mode" in 0*) normalized_mode=${normalized_mode#0} ;; esac
+      expected="0:0:$normalized_mode"
       [ "$actual" = "$expected" ] || fail "$target differs and has owner/mode $actual; expected $expected. It was left untouched."
       install -o root -g root -m "$mode" "$source" "$target"
       echo "Updated $target"
