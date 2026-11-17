@@ -24,7 +24,7 @@ export async function POST(request) {
   let body;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Invalid request body" }, { status: 400 }); }
   if (!/^[a-f0-9]{32}$/.test(body?.archive_id || "")) return NextResponse.json({ error: "Invalid saved config" }, { status: 400 });
-  const action = body?.action === "restore" ? "restore-saved-config" : "delete-saved-config";
+  const action = body?.action === "restore" ? "restore-saved-config" : body?.action === "rename" ? "rename-saved-config" : "delete-saved-config";
   try {
     const result = await submitUiCommand({ action, archive_id: body.archive_id });
     return NextResponse.json(result, { status: result.pending ? 202 : result.ok ? 200 : 400 });

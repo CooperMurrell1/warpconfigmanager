@@ -52,6 +52,28 @@ def validate_config_filename(value):
     return value
 
 
+def unique_saved_config_name(conn):
+    names = {row["name"].casefold() for row in conn.execute("SELECT name FROM saved_configs").fetchall()}
+    base = "Untitled Config"
+    if base.casefold() not in names:
+        return base
+    suffix = 2
+    while True:
+        candidate = "%s (%d)" % (base, suffix)
+        if candidate.casefold() not in names:
+            return candidate
+        suffix += 1
+
+
+def validate_saved_config_name(value):
+    if not isinstance(value, str):
+        raise ValueError("Config name must be text")
+    name = value.strip()
+    if not name or len(name) > 64 or any(ord(char) < 32 for char in name):
+        raise ValueError("Config name must be 1 to 64 printable characters")
+    return name
+
+
 def set_active_config_filename(value):
     global ACTIVE, BACKUP
     filename = validate_config_filename(value)
@@ -130,8 +152,20 @@ def init_db():
             conn.execute("ALTER TABLE service_logs ADD COLUMN category TEXT NOT NULL DEFAULT 'service'")
         conn.execute("CREATE TABLE IF NOT EXISTS generator_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, source TEXT NOT NULL, result TEXT NOT NULL, details TEXT NOT NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_generator_logs_id ON generator_logs(id DESC)")
-        conn.execute("CREATE TABLE IF NOT EXISTS saved_configs (id TEXT PRIMARY KEY, filename TEXT NOT NULL, saved_at TEXT NOT NULL, expires_at TEXT NOT NULL, sha256 TEXT UNIQUE NOT NULL, address TEXT NOT NULL, endpoint TEXT NOT NULL, account_type TEXT, account_id TEXT, device_id TEXT, account_created_at TEXT, account_expires_at TEXT, interface_public_key TEXT, dns TEXT, mtu INTEGER, allowed_ips TEXT, keepalive INTEGER)")
+        conn.execute("CREATE TABLE IF NOT EXISTS saved_configs (id TEXT PRIMARY KEY, filename TEXT NOT NULL, name TEXT NOT NULL DEFAULT 'Untitled Config', saved_at TEXT NOT NULL, expires_at TEXT NOT NULL, sha256 TEXT UNIQUE NOT NULL, address TEXT NOT NULL, endpoint TEXT NOT NULL, account_type TEXT, account_id TEXT, device_id TEXT, account_created_at TEXT, account_expires_at TEXT, interface_public_key TEXT, dns TEXT, mtu INTEGER, allowed_ips TEXT, keepalive INTEGER)")
         saved_columns = {row["name"] for row in conn.execute("PRAGMA table_info(saved_configs)").fetchall()}
+        if "name" not in saved_columns:
+            conn.execute("ALTER TABLE saved_configs ADD COLUMN name TEXT NOT NULL DEFAULT 'Untitled Config'")
+            used_names = set()
+            rows = conn.execute("SELECT id FROM saved_configs ORDER BY saved_at,id").fetchall()
+            for row in rows:
+                candidate = "Untitled Config"
+                suffix = 2
+                while candidate.casefold() in used_names:
+                    candidate = "Untitled Config (%d)" % suffix
+                    suffix += 1
+                conn.execute("UPDATE saved_configs SET name=? WHERE id=?", (candidate, row["id"]))
+                used_names.add(candidate.casefold())
         for column, kind in (("account_type", "TEXT"), ("account_id", "TEXT"), ("device_id", "TEXT"), ("account_created_at", "TEXT"), ("account_expires_at", "TEXT"), ("interface_public_key", "TEXT"), ("dns", "TEXT"), ("mtu", "INTEGER"), ("allowed_ips", "TEXT"), ("keepalive", "INTEGER")):
             if column not in saved_columns:
                 conn.execute("ALTER TABLE saved_configs ADD COLUMN " + column + " " + kind)
@@ -356,7 +390,7 @@ def load_state():
         state["history"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,result,source,error,duration_seconds FROM update_history ORDER BY id DESC LIMIT 100").fetchall()][::-1]
         state["logs"] = [dict(r) for r in conn.execute("SELECT id,at,level,message,category FROM service_logs ORDER BY id DESC LIMIT 200").fetchall()][::-1]
         state["generator_logs"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,source,result,details FROM generator_logs ORDER BY id DESC LIMIT 100").fetchall()][::-1]
-        state["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,address,endpoint,dns,mtu,allowed_ips,keepalive FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+        state["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,name,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,address,endpoint,dns,mtu,allowed_ips,keepalive FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
     state["interval_seconds"] = max(MIN_INTERVAL, min(MAX_INTERVAL, int(state.get("interval_seconds", INTERVAL_DEFAULT))))
     try:
         state["config_retention_seconds"] = max(3600, min(365 * 86400, int(state.get("config_retention_seconds", 30 * 86400))))
@@ -523,13 +557,13 @@ def archive_config(text, filename=None, account_info=None):
                 conn.execute("UPDATE saved_configs SET account_type=COALESCE(account_type,?),account_id=COALESCE(account_id,?),device_id=COALESCE(device_id,?),account_created_at=COALESCE(account_created_at,?),account_expires_at=COALESCE(account_expires_at,?),interface_public_key=COALESCE(interface_public_key,?),dns=COALESCE(dns,?),mtu=COALESCE(mtu,?),allowed_ips=COALESCE(allowed_ips,?),keepalive=COALESCE(keepalive,?) WHERE id=?",
                              (account.get("account_type"), account.get("account_id"), account.get("device_id"), account.get("created_at"), account.get("expires_at"), public_key, details["dns"], details["mtu"], details["allowed_ips"], details["keepalive"], existing["id"]))
                 conn.commit()
-                STATE["saved_configs"] = [dict(row) for row in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,address,endpoint,dns,mtu,allowed_ips,keepalive FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+                STATE["saved_configs"] = [dict(row) for row in conn.execute("SELECT id,filename,name,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,address,endpoint,dns,mtu,allowed_ips,keepalive FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
                 write_public_state(STATE)
                 return
             config_id = secrets.token_hex(16)
             atomic_write(ARCHIVE_DIR / (config_id + ".conf"), text, 0o600)
-            conn.execute("INSERT INTO saved_configs(id,filename,saved_at,expires_at,sha256,address,endpoint,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,dns,mtu,allowed_ips,keepalive) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                         (config_id, filename or STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), saved, expires, digest, details["address"], details["endpoint"],
+            conn.execute("INSERT INTO saved_configs(id,filename,name,saved_at,expires_at,sha256,address,endpoint,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,dns,mtu,allowed_ips,keepalive) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (config_id, filename or STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), unique_saved_config_name(conn), saved, expires, digest, details["address"], details["endpoint"],
                           account.get("account_type"), account.get("account_id"), account.get("device_id"), account.get("created_at"), account.get("expires_at"), public_key, details["dns"], details["mtu"], details["allowed_ips"], details["keepalive"]))
             conn.commit()
         prune_archives()
@@ -559,7 +593,7 @@ def prune_archives():
             except (OSError, UnicodeError, ValueError, RuntimeError, subprocess.SubprocessError):
                 pass
         conn.commit()
-        STATE["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,address,endpoint,dns,mtu,allowed_ips,keepalive FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+        STATE["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,name,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,address,endpoint,dns,mtu,allowed_ips,keepalive FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
     write_public_state(STATE)
 
 
@@ -860,6 +894,24 @@ def process_ui_command():
             except FileNotFoundError: pass
             prune_archives()
             result = {"id": request_id, "ok": True, "message": "Saved config deleted"}
+    elif action == "rename-saved-config":
+        config_id = command.get("archive_id", "")
+        try:
+            if not re.fullmatch(r"[a-f0-9]{32}", config_id):
+                raise ValueError("Invalid saved config")
+            name = validate_saved_config_name(command.get("name"))
+            with db_session() as conn:
+                if not conn.execute("SELECT 1 FROM saved_configs WHERE id=?", (config_id,)).fetchone():
+                    raise ValueError("Saved config was not found")
+                if conn.execute("SELECT 1 FROM saved_configs WHERE name=? COLLATE NOCASE AND id<>?", (name, config_id)).fetchone():
+                    raise ValueError("Each saved config must have a unique name")
+                conn.execute("UPDATE saved_configs SET name=? WHERE id=?", (name, config_id))
+                conn.commit()
+            prune_archives()
+            log_event("info", "Saved config renamed to %s" % name, "config")
+            result = {"id": request_id, "ok": True, "message": "Config name saved"}
+        except ValueError as exc:
+            result = {"id": request_id, "ok": False, "message": str(exc)}
     elif action == "restore-saved-config":
         config_id = command.get("archive_id", "")
         if not re.fullmatch(r"[a-f0-9]{32}", config_id):
@@ -901,7 +953,7 @@ def process_ui_command():
             if not re.fullmatch(r"[a-f0-9]{32}", config_id):
                 raise ValueError("Invalid saved config")
             with db_session() as conn:
-                row = conn.execute("SELECT filename FROM saved_configs WHERE id=?", (config_id,)).fetchone()
+                row = conn.execute("SELECT name FROM saved_configs WHERE id=?", (config_id,)).fetchone()
             if not row:
                 raise ValueError("Saved config was not found")
             path = ARCHIVE_DIR / (config_id + ".conf")
@@ -909,7 +961,8 @@ def process_ui_command():
                 raise ValueError("Saved config is unavailable")
             content = path.read_text(encoding="utf-8")
             validate_config(content)
-            safe_name = row["filename"] if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}\.conf", row["filename"]) else "saved-config.conf"
+            safe_base = re.sub(r"[^A-Za-z0-9_.-]+", "-", row["name"]).strip(".-_")[:64] or "saved-config"
+            safe_name = safe_base + ".conf"
             result = {"id": request_id, "ok": True, "config_content": content, "filename": safe_name}
         except (OSError, UnicodeError, ValueError, subprocess.SubprocessError) as exc:
             result = {"id": request_id, "ok": False, "message": str(exc) or "Could not read saved config"}

@@ -65,9 +65,9 @@ export default function ConfigPage() {
     {state?.status === "running" && state?.generator_stage && <GlassCard p="4" mb="5"><Text color="cyan.200" fontSize="sm">{state.generator_stage}</Text></GlassCard>}
 
     <SimpleGrid columns={{ base: 1, "2xl": 12 }} alignItems="start" gap="5">
-      <Stack gap="5" minW="0" gridColumn={{ "2xl": "span 4" }}>
+      <Stack gap="5" minW="0" gridColumn={{ "2xl": "span 8" }}>
         <SimpleGrid columns={{ base: 1, md: 2 }} gap="4">
-          <GlassCard p="5"><Detail label="Viewing file">{selectedSaved?.filename || state?.config_filename || "wg0.conf"}{selectedActive && <Text as="span" color="cyan.200" ml="2">Active</Text>}</Detail></GlassCard>
+          <GlassCard p="5"><Detail label="Viewing config">{selectedSaved?.name || "Active config"}{selectedActive && <Text as="span" color="cyan.200" ml="2">Active</Text>}</Detail></GlassCard>
           <GlassCard p="5"><Text color="gray.400" fontSize="xs" fontWeight="700" letterSpacing="0.08em">SERVICE STATUS</Text><Box mt="2"><StatusBadge status={state?.status} /></Box><Text color="gray.500" fontSize="xs" mt="2">Last successful update {when(state?.last_success_at)}</Text></GlassCard>
         </SimpleGrid>
 
@@ -117,8 +117,8 @@ export default function ConfigPage() {
         </Alert.Root>
       </Stack>
 
-      <Stack gap="4" id="saved-configs" minW="0" gridColumn={{ "2xl": "span 8" }}>
-        <Box><Heading color="gray.50" size="lg">Saved configs</Heading><Text color="gray.400" fontSize="sm" mt="2">Choose a row to inspect it. Activate, download, or delete it with the existing table actions.</Text></Box>
+      <Stack gap="4" id="saved-configs" minW="0" gridColumn={{ "2xl": "span 4" }}>
+        <Box><Heading color="gray.50" size="lg">Saved configs</Heading><Text color="gray.400" fontSize="sm" mt="2">Name and date for each saved version.</Text></Box>
         <SavedConfigsTable selectedId={selectedSaved?.id || null} onSelect={setSelectedId} />
       </Stack>
     </SimpleGrid>
