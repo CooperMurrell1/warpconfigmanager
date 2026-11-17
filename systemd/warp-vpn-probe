@@ -93,18 +93,38 @@ compose_declares_vpn_network() {
     ;;
   esac
   [ -n "$cdc_service" ] && [ -n "$cdc_project_dir" ] && [ -n "$cdc_files" ] || return 1
+  log "Compose source labels: project=$compose_project service=$cdc_service working_dir=$cdc_project_dir config_files=$cdc_files"
+
+  cdc_host_project_dir=$(portainer_path_to_host "$cdc_project_dir")
+  if [ -n "$cdc_host_project_dir" ] && [ -d "$cdc_host_project_dir" ]; then
+    log "mapped Portainer project directory $cdc_project_dir to host path $cdc_host_project_dir"
+    cdc_project_dir=$cdc_host_project_dir
+  fi
 
   set --
   cdc_remaining="$cdc_files"
+  cdc_host_files=""
   while :; do
     case "$cdc_remaining" in
       *,*) cdc_file=${cdc_remaining%%,*}; cdc_remaining=${cdc_remaining#*,} ;;
       *) cdc_file=$cdc_remaining; cdc_remaining="" ;;
     esac
     [ -n "$cdc_file" ] || return 1
+    case "$cdc_file" in /*) ;; *) cdc_file="$cdc_project_dir/$cdc_file" ;; esac
+    cdc_host_file=$(portainer_path_to_host "$cdc_file")
+    if [ -n "$cdc_host_file" ] && [ -f "$cdc_host_file" ]; then
+      log "mapped Portainer Compose file $cdc_file to host path $cdc_host_file"
+      cdc_file=$cdc_host_file
+    fi
+    [ -f "$cdc_file" ] || {
+      log "Compose config file is not readable on the host for container=$cdc_container: $cdc_file"
+      return 1
+    }
+    if [ -n "$cdc_host_files" ]; then cdc_host_files="$cdc_host_files,$cdc_file"; else cdc_host_files="$cdc_file"; fi
     set -- "$@" -f "$cdc_file"
     [ -n "$cdc_remaining" ] || break
   done
+  cdc_files="$cdc_host_files"
 
   cdc_match=""
   if docker compose version >/dev/null 2>&1; then
@@ -120,6 +140,48 @@ compose_declares_vpn_network() {
   if [ "$cdc_match" = match ]; then return 0; fi
   log "Compose config did not confirm network_mode=service:qbittorrentvpn for project=$compose_project service=$cdc_service (render result=${cdc_match:-unavailable})"
   return 1
+}
+
+portainer_path_to_host() {
+  printf '%s\n' "$(docker inspect --format '{{range .Mounts}}{{printf "%s\t%s\n" .Destination .Source}}{{end}}' portainer 2>/dev/null || true)" |
+    awk -F '\t' -v path="$1" '
+      {
+        dest=$1; source=$2
+        if (path == dest || substr(path, 1, length(dest) + 1) == dest "/") {
+          if (length(dest) > best) {
+            best=length(dest)
+            suffix=substr(path, length(dest) + 1)
+            result=source suffix
+          }
+        }
+      }
+      END { if (result != "") print result }
+    '
+}
+
+compose_force_recreate_service() {
+  cfr_service="$cdc_service"
+  cfr_project_dir="$cdc_project_dir"
+  cfr_files="$cdc_files"
+  set --
+  cfr_remaining="$cfr_files"
+  while :; do
+    case "$cfr_remaining" in
+      *,*) cfr_file=${cfr_remaining%%,*}; cfr_remaining=${cfr_remaining#*,} ;;
+      *) cfr_file=$cfr_remaining; cfr_remaining="" ;;
+    esac
+    [ -n "$cfr_file" ] || return 1
+    set -- "$@" -f "$cfr_file"
+    [ -n "$cfr_remaining" ] || break
+  done
+  log "recreating Compose service $compose_project/$cfr_service from its source config"
+  if docker compose version >/dev/null 2>&1; then
+    docker compose --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service" >/dev/null 2>&1
+  elif command -v docker-compose >/dev/null 2>&1; then
+    docker-compose --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service" >/dev/null 2>&1
+  else
+    return 1
+  fi
 }
 
 running=$(docker inspect --format '{{.State.Running}}' qbittorrentvpn 2>/dev/null || true)
@@ -200,25 +262,62 @@ elif [ "$ACTION" = activate-config ]; then
           message=no-routed-containers-found
           log "warning: no dependent containers matched; continuing config activation and WireGuard key verification"
         fi
-        restart_pids=""
-        for container in $dependents; do
-          (dependent_running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)
-           if [ "$dependent_running" = true ]; then
-             log "restarting running routed dependent id=$container"
-             if docker restart --time 15 "$container" >/dev/null 2>&1; then log "restart succeeded for routed dependent id=$container"; else log "restart failed for routed dependent id=$container"; exit 1; fi
-           else
-             log "starting stopped routed dependent id=$container"
-             if docker start "$container" >/dev/null 2>&1; then log "start succeeded for routed dependent id=$container"; else log "start failed for routed dependent id=$container"; exit 1; fi
-           fi) &
-          restart_pids="$restart_pids $!"
-        done
+        processed_services=""
+        processed_containers=""
         restart_failed=false
-        for restart_pid in $restart_pids; do
-          if wait "$restart_pid"; then
-            restarted_count=$((restarted_count + 1))
+        for container in $dependents; do
+          case " $processed_containers " in
+            *" $container "*) log "container id=$container was already handled as part of a Compose service recreation"; continue ;;
+          esac
+          if compose_declares_vpn_network "$container"; then
+            service_key="$compose_project/$cdc_service"
+            case " $processed_services " in
+              *" $service_key "*) log "Compose service $service_key was already recreated; skipping duplicate container entry" ;;
+              *)
+                processed_services="$processed_services $service_key"
+                service_container_count=0
+                for related in $dependents; do
+                  related_project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$related" 2>/dev/null || true)
+                  related_service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$related" 2>/dev/null || true)
+                  if [ "$related_project/$related_service" = "$service_key" ]; then
+                    service_container_count=$((service_container_count + 1))
+                    processed_containers="$processed_containers $related"
+                  fi
+                done
+                [ "$service_container_count" -gt 0 ] || service_container_count=1
+                if compose_force_recreate_service; then
+                  restarted_count=$((restarted_count + service_container_count))
+                  log "Compose service $service_key recreated successfully; containers=$service_container_count"
+                else
+                  restart_failed=true
+                  dependent_failed_count=$((dependent_failed_count + service_container_count))
+                  log "Compose service $service_key failed to recreate from its source config"
+                fi
+                ;;
+            esac
           else
-            restart_failed=true
-            dependent_failed_count=$((dependent_failed_count + 1))
+            dependent_running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)
+            if [ "$dependent_running" = true ]; then
+              log "restarting routed dependent without readable Compose config id=$container"
+              if docker restart --time 15 "$container" >/dev/null 2>&1; then
+                restarted_count=$((restarted_count + 1))
+                log "restart succeeded for routed dependent id=$container"
+              else
+                restart_failed=true
+                dependent_failed_count=$((dependent_failed_count + 1))
+                log "restart failed for routed dependent id=$container"
+              fi
+            else
+              log "starting stopped routed dependent without readable Compose config id=$container"
+              if docker start "$container" >/dev/null 2>&1; then
+                restarted_count=$((restarted_count + 1))
+                log "start succeeded for routed dependent id=$container"
+              else
+                restart_failed=true
+                dependent_failed_count=$((dependent_failed_count + 1))
+                log "start failed for routed dependent id=$container"
+              fi
+            fi
           fi
         done
         if [ "$restart_failed" = true ]; then
