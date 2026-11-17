@@ -56,7 +56,7 @@ A GitHub Actions workflow builds and pushes ghcr.io/coopermurrell1/warpconfigman
 4. Update the existing jellyfin stack. This adds one container to that stack.
 5. In Nginx Proxy Manager, add a Proxy Host pointing to warp-config-manager port 3000, assign a trusted HTTPS certificate, enable forced SSL, and restrict access as preferred. The service publishes no host port.
 
-The host setup script and the stack service are separate one-time steps. After both are done, the container initializes SQLite, creates its session key if absent, validates the existing config, skips generation when the config is usable, and schedules updates automatically.
+The host setup script and the stack service are separate one-time steps. After both are done, the container initializes SQLite, creates its session key if absent, and validates the existing config. At startup it reuses a usable config until it is 24 hours old; missing, invalid, or older configs trigger generation. The config page also shows the interface public key derived from the private key.
 
 ## Applying an update
 

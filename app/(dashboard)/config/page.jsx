@@ -94,6 +94,7 @@ export default function ConfigPage() {
       <GlassCard p={{ base: "5", md: "7" }} mb="5">
         <Heading color="gray.50" size="md">Private key</Heading>
         <Text color="gray.400" fontSize="sm" mt="2">Administrator-only. The key is loaded on demand, cleared from this page after 30 seconds, and remains blurred until hovered or focused.</Text>
+        <Box mt="5"><Detail label="Interface public key">{config?.interface_public_key || "Not available"}</Detail></Box>
         {keyError && <Text color="red.200" mt="4">{keyError}</Text>}
         {privateKey ? (
           <Box mt="5">

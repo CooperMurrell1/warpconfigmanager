@@ -29,6 +29,7 @@ ACTIVE = CONFIG_DIR / DEFAULT_CONFIG_FILENAME
 BACKUP = ACTIVE.with_name(ACTIVE.name + ".last-good")
 GENERATOR = "/usr/local/bin/warp-register.sh"
 INTERVAL_DEFAULT = 86400
+STARTUP_FRESHNESS_SECONDS = 24 * 60 * 60
 GENERATOR_COMMIT = "d4616f154d654d5c159c193432159240c96614bb"
 WARP_API_ENDPOINT = "https://api.cloudflareclient.com/v0a737/reg"
 DEFAULT_WARP_SETTINGS = {"device_type": "Linux", "locale": "en_US", "device_name": "", "device_model": ""}
@@ -234,7 +235,13 @@ def public_details():
     try:
         if ACTIVE.is_symlink() or not ACTIVE.is_file() or ACTIVE.stat().st_size > 32768:
             return None
-        return parse_config(ACTIVE.read_text(encoding="utf-8"))
+        text = ACTIVE.read_text(encoding="utf-8")
+        details = parse_config(text)
+        try:
+            details["interface_public_key"] = interface_public_key(text)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            details["interface_public_key"] = None
+        return details
     except (OSError, UnicodeError, ValueError):
         return None
 
@@ -637,7 +644,28 @@ def main():
         save_state(STATE)
     active, _ = active_config()
     if active:
-        log_event("info", "Usable active WireGuard config found; startup generation skipped")
+        try:
+            config_modified = ACTIVE.stat().st_mtime
+            config_age = max(0, time.time() - config_modified)
+        except OSError:
+            config_age = STARTUP_FRESHNESS_SECONDS
+            config_modified = time.time() - config_age
+        if config_age < STARTUP_FRESHNESS_SECONDS:
+            fresh_due = dt.datetime.fromtimestamp(config_modified + STARTUP_FRESHNESS_SECONDS, UTC).replace(microsecond=0)
+            current_due = None
+            try:
+                if STATE.get("next_run_at"):
+                    current_due = dt.datetime.fromisoformat(STATE["next_run_at"].replace("Z", "+00:00"))
+            except ValueError:
+                pass
+            if current_due is None or current_due.timestamp() < fresh_due.timestamp():
+                with STATE_LOCK:
+                    STATE["next_run_at"] = fresh_due.isoformat().replace("+00:00", "Z")
+                    save_state(STATE)
+            log_event("info", "Usable config is less than 24 hours old; startup generation skipped")
+        else:
+            log_event("info", "Usable config is at least 24 hours old; startup generation queued")
+            threading.Thread(target=run_update, args=("startup",), daemon=True).start()
     else:
         log_event("warning", "No usable active config found; startup generation queued")
         threading.Thread(target=run_update, args=("startup",), daemon=True).start()
