@@ -17,6 +17,8 @@ export default function SettingsPage() {
   const { state, busy, post } = useDashboard();
   const [intervalValue, setIntervalValue] = useState("24");
   const [intervalUnit, setIntervalUnit] = useState("hours");
+  const [retentionValue, setRetentionValue] = useState("30");
+  const [retentionUnit, setRetentionUnit] = useState("days");
   const [filename, setFilename] = useState("wg0.conf");
   const [filenameEditing, setFilenameEditing] = useState(false);
   const [confirmFilenameOpen, setConfirmFilenameOpen] = useState(false);
@@ -32,10 +34,16 @@ export default function SettingsPage() {
       setIntervalUnit(display.unit);
     }
     if (!filenameEditing) setFilename(state.config_filename || "wg0.conf");
+    const retention = intervalDisplay(state.config_retention_seconds || 30 * 86400);
+    if (document.activeElement?.id !== "retention-value" && document.activeElement?.id !== "retention-unit") {
+      setRetentionValue(retention.value); setRetentionUnit(retention.unit);
+    }
     if (!document.activeElement?.closest("#warp-settings-form") && state.warp_settings) setWarpSettings(state.warp_settings);
   }, [state, filenameEditing]);
 
   const intervalSeconds = Math.round(Number(intervalValue) * intervalUnits[intervalUnit]);
+  const retentionSeconds = Math.round(Number(retentionValue) * intervalUnits[retentionUnit]);
+  const retentionValid = Number.isInteger(retentionSeconds) && retentionSeconds >= 3600 && retentionSeconds <= 365 * 86400;
   const intervalValid = Number.isFinite(intervalSeconds) && intervalSeconds >= 300 && intervalSeconds <= 7776000;
 
   async function confirmFilenameChange() {
@@ -91,6 +99,17 @@ export default function SettingsPage() {
           </Stack>
         </GlassCard>
       </SimpleGrid>
+
+      <GlassCard p={{ base: "5", md: "7" }} mt="5">
+        <Heading color="gray.50" size="md" mb="2">Saved config retention</Heading>
+        <Text color="gray.400" fontSize="sm" mb="5">Automatically delete archived configs after this period. The archive keeps at most 20 configs.</Text>
+        <Stack direction={{ base: "column", sm: "row" }} gap="3" maxW="lg">
+          <Input id="retention-value" type="number" min="1" step="1" value={retentionValue} onChange={event => setRetentionValue(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
+          <Box as="select" id="retention-unit" value={retentionUnit} onChange={event => setRetentionUnit(event.target.value)} aria-label="Saved config retention unit" minW="32" h="10" px="3" rounded="md" bg="rgba(2, 6, 23, 0.92)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50"><option value="hours">Hours</option><option value="days">Days</option><option value="weeks">Weeks</option></Box>
+        </Stack>
+        <Text color="gray.500" fontSize="xs" mt="2">Choose from 1 hour to 365 days.</Text>
+        <Button mt="4" bg="cyan.400" color="gray.950" loading={busy} disabled={!admin || !retentionValid} onClick={() => post("/api/config-retention", { retention_seconds: retentionSeconds }, "Saved config retention updated.")}>Save retention</Button>
+      </GlassCard>
 
       <GlassCard id="warp-settings-form" p={{ base: "5", md: "7" }} mt="5">
         <Heading color="gray.50" size="md" mb="2">WARP device details</Heading>

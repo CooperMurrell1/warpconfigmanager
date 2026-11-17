@@ -24,6 +24,7 @@ UI_RESULT = pathlib.Path("/ui-commands/result.json")
 HOST_REQUEST = CONTROL / "manager-request.json"
 HOST_RESULT = CONTROL / "manager-result.json"
 CONFIG_DIR = pathlib.Path("/config/wireguard")
+ARCHIVE_DIR = DATA / "saved-configs"
 DEFAULT_CONFIG_FILENAME = "wg0.conf"
 ACTIVE = CONFIG_DIR / DEFAULT_CONFIG_FILENAME
 BACKUP = ACTIVE.with_name(ACTIVE.name + ".last-good")
@@ -98,6 +99,9 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_update_history_finished ON update_history(id DESC)")
         conn.execute("CREATE TABLE IF NOT EXISTS service_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_service_logs_id ON service_logs(id DESC)")
+        conn.execute("CREATE TABLE IF NOT EXISTS generator_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, source TEXT NOT NULL, result TEXT NOT NULL, details TEXT NOT NULL)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_generator_logs_id ON generator_logs(id DESC)")
+        conn.execute("CREATE TABLE IF NOT EXISTS saved_configs (id TEXT PRIMARY KEY, filename TEXT NOT NULL, saved_at TEXT NOT NULL, expires_at TEXT NOT NULL, sha256 TEXT UNIQUE NOT NULL, address TEXT NOT NULL, endpoint TEXT NOT NULL)")
         conn.commit()
 
 
@@ -137,7 +141,8 @@ def safe_state_default():
             "next_run_at": None, "status": "starting", "last_error": None,
             "ip": {"address": None, "checked_at": None, "error": "Not checked yet"},
             "last_ui_command_id": None, "config_filename": DEFAULT_CONFIG_FILENAME, "pending_apply": False,
-            "warp_settings": dict(DEFAULT_WARP_SETTINGS), "warp_account": None, "history": [], "logs": []}
+            "warp_settings": dict(DEFAULT_WARP_SETTINGS), "warp_account": None, "history": [], "logs": [],
+            "generator_logs": [], "saved_configs": [], "config_retention_seconds": 30 * 86400}
 
 
 def parse_config(text):
@@ -288,10 +293,13 @@ def write_public_state(state):
               "last_attempt_at": state.get("last_attempt_at"), "last_success_at": state.get("last_success_at"),
               "next_run_at": state.get("next_run_at"), "last_error": state.get("last_error"), "config_filename": state.get("config_filename", DEFAULT_CONFIG_FILENAME),
               "pending_apply": state.get("pending_apply", False), "config": public_details(), "ip": state.get("ip"),
+              "generator_stage": state.get("generator_stage"),
               "warp_settings": state.get("warp_settings", dict(DEFAULT_WARP_SETTINGS)), "warp_account": state.get("warp_account"),
               "warp_service": {"provider": "Cloudflare WARP", "generator": "wireguard-warp-generator", "generator_commit": GENERATOR_COMMIT,
                                "registration_endpoint": WARP_API_ENDPOINT},
-              "history": state.get("history", [])[-25:], "logs": state.get("logs", [])[-50:]}
+              "history": state.get("history", [])[-25:], "logs": state.get("logs", [])[-50:],
+              "generator_logs": state.get("generator_logs", [])[-100:], "saved_configs": state.get("saved_configs", [])[-20:],
+              "config_retention_seconds": state.get("config_retention_seconds", 30 * 86400)}
     atomic_write(DATA / "public-state.json", json.dumps(public, separators=(",", ":")), 0o644)
 
 
@@ -314,7 +322,13 @@ def load_state():
                 pass
         state["history"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,result,source,error,duration_seconds FROM update_history ORDER BY id DESC LIMIT 100").fetchall()][::-1]
         state["logs"] = [dict(r) for r in conn.execute("SELECT at,level,message FROM service_logs ORDER BY id DESC LIMIT 200").fetchall()][::-1]
+        state["generator_logs"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,source,result,details FROM generator_logs ORDER BY id DESC LIMIT 100").fetchall()][::-1]
+        state["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,address,endpoint FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
     state["interval_seconds"] = max(MIN_INTERVAL, min(MAX_INTERVAL, int(state.get("interval_seconds", INTERVAL_DEFAULT))))
+    try:
+        state["config_retention_seconds"] = max(3600, min(365 * 86400, int(state.get("config_retention_seconds", 30 * 86400))))
+    except (ValueError, TypeError):
+        state["config_retention_seconds"] = 30 * 86400
     try:
         state["warp_settings"] = validate_warp_settings(state.get("warp_settings", DEFAULT_WARP_SETTINGS))
     except ValueError:
@@ -393,7 +407,7 @@ def interface_public_key(text):
 
 
 def generate_candidate(settings):
-    cmd = [GENERATOR, "--info"]
+    cmd = [GENERATOR, "--verbose", "--info"]
     if settings.get("device_name"):
         cmd += ["--name", settings["device_name"]]
     if settings.get("device_model"):
@@ -412,11 +426,101 @@ def generate_candidate(settings):
     except OSError:
         raise RuntimeError("Generator could not be started")
     if result.returncode != 0:
-        # The upstream script may include API tokens or license data in stderr.
+        STATE.setdefault("_generator_details", []).extend(sanitized_generator_lines(result.stderr))
         raise RuntimeError("Generator failed (exit code %d); stderr suppressed to protect secrets" % result.returncode)
     if not result.stdout.strip():
         raise RuntimeError("Generator returned an empty config")
+    STATE.setdefault("_generator_details", []).extend(sanitized_generator_lines(result.stderr))
     return result.stdout, parse_warp_account_info(result.stderr)
+
+
+def sanitized_generator_lines(stderr):
+    # Upstream verbose output includes API payloads, tokens and license data; store only known-safe progress.
+    allowed = ("Checking dependencies", "Generating WireGuard keypair", "Registering with Cloudflare WARP",
+               "Applying license key", "License key applied successfully", "Generating WireGuard configuration",
+               "Configuration generated", "=== Account Info ===")
+    safe = []
+    for raw in stderr.splitlines():
+        line = raw.strip()
+        if any(tag.lower() in line.lower() for tag in allowed):
+            safe.append(line[:180])
+        elif line.startswith("[VERBOSE] Generated public key:"):
+            safe.append("[VERBOSE] Interface public key derived (value hidden)")
+    return safe
+
+
+def archive_config(text, filename=None):
+    try:
+        details = parse_config(text)
+        import hashlib
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        ARCHIVE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(ARCHIVE_DIR, 0o700)
+        saved = now()
+        expires = (dt.datetime.now(UTC) + dt.timedelta(seconds=STATE.get("config_retention_seconds", 30 * 86400))).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        with db_session() as conn:
+            if conn.execute("SELECT id FROM saved_configs WHERE sha256=?", (digest,)).fetchone():
+                return
+            config_id = secrets.token_hex(16)
+            atomic_write(ARCHIVE_DIR / (config_id + ".conf"), text, 0o600)
+            conn.execute("INSERT INTO saved_configs(id,filename,saved_at,expires_at,sha256,address,endpoint) VALUES(?,?,?,?,?,?,?)",
+                         (config_id, filename or STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), saved, expires, digest, details["address"], details["endpoint"]))
+            conn.commit()
+        prune_archives()
+    except Exception as exc:
+        log_event("warning", "Could not save config archive (%s)" % type(exc).__name__)
+
+
+def prune_archives():
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(ARCHIVE_DIR, 0o700)
+    with db_session() as conn:
+        expired = conn.execute("SELECT id FROM saved_configs WHERE expires_at<=?", (now(),)).fetchall()
+        excess = conn.execute("SELECT id FROM saved_configs ORDER BY saved_at DESC LIMIT -1 OFFSET 20").fetchall()
+        ids = {r["id"] for r in expired + excess}
+        for config_id in ids:
+            try: (ARCHIVE_DIR / (config_id + ".conf")).unlink()
+            except FileNotFoundError: pass
+        if ids: conn.executemany("DELETE FROM saved_configs WHERE id=?", [(item,) for item in ids])
+        conn.commit()
+        STATE["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,address,endpoint FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+    write_public_state(STATE)
+
+
+def restore_saved_config(config_id):
+    previous = None
+    installed = False
+    try:
+        with db_session() as conn:
+            row = conn.execute("SELECT filename FROM saved_configs WHERE id=?", (config_id,)).fetchone()
+        if not row: raise RuntimeError("Saved config was not found")
+        candidate = (ARCHIVE_DIR / (config_id + ".conf")).read_text(encoding="utf-8")
+        validate_config(candidate)
+        previous, _ = active_config()
+        if previous: atomic_write(BACKUP, previous, 0o600)
+        atomic_write(ACTIVE, candidate, 0o600)
+        installed = True
+        result = host_request("activate-config", interface_public_key(candidate))
+        if result.get("config_loaded") is not True: raise RuntimeError("Host manager could not confirm that the saved config is active")
+        with STATE_LOCK:
+            STATE["pending_apply"] = False
+            STATE["status"] = "success"
+            STATE["ip"] = {"address": result.get("ip"), "checked_at": now(), "error": None}
+            save_state(STATE)
+        log_event("info", "Restored and activated saved config %s" % row["filename"])
+    except Exception as exc:
+        if installed and previous:
+            try:
+                atomic_write(ACTIVE, previous, 0o600)
+                host_request("activate-config", interface_public_key(previous))
+            except Exception: pass
+        with STATE_LOCK:
+            STATE["pending_apply"] = True
+            STATE["last_error"] = str(exc)[:300]
+            save_state(STATE)
+        log_event("error", "Saved config activation failed: %s" % str(exc)[:250])
+    finally:
+        UPDATE_LOCK.release()
 
 
 def host_request(action, expected_public_key=None):
@@ -430,7 +534,7 @@ def host_request(action, expected_public_key=None):
         if expected_public_key:
             request["expected_public_key"] = expected_public_key
         atomic_write(HOST_REQUEST, json.dumps(request), 0o600)
-        deadline = time.monotonic() + 600
+        deadline = time.monotonic() + 240
         while time.monotonic() < deadline and not STOP.is_set():
             try:
                 result = json.loads(HOST_RESULT.read_text(encoding="utf-8"))
@@ -441,7 +545,7 @@ def host_request(action, expected_public_key=None):
             except (OSError, ValueError):
                 pass
             time.sleep(1)
-        raise RuntimeError("Timed out waiting for the host VPN helper")
+        raise RuntimeError("Timed out after 240 seconds waiting for the host VPN helper")
 
 
 def run_update(source, lock_acquired=False):
@@ -450,6 +554,7 @@ def run_update(source, lock_acquired=False):
     started = now()
     start_mono = time.monotonic()
     previous, _ = active_config()
+    STATE["_generator_details"] = []
     previous_pending = STATE.get("pending_apply", False)
     installed = False
     activation_attempted = False
@@ -459,16 +564,32 @@ def run_update(source, lock_acquired=False):
         STATE["last_error"] = None
         save_state(STATE)
     log_event("info", "%s update started" % source)
+    def add_run_detail(message):
+        timestamp = now()
+        STATE.setdefault("_generator_details", []).append(timestamp + " — " + message)
+        STATE["generator_stage"] = message
+        with STATE_LOCK: save_state(STATE)
     try:
+        add_run_detail("Generation started at " + started)
+        add_run_detail("Running pinned WARP generator with verbose diagnostics")
         candidate, account = generate_candidate(dict(STATE.get("warp_settings", DEFAULT_WARP_SETTINGS)))
+        add_run_detail("Generator returned configuration output")
         validate_config(candidate)
+        add_run_detail("WireGuard configuration validation passed")
         candidate_key = interface_public_key(candidate)
+        add_run_detail("Derived expected tunnel public key (value hidden)")
         if previous is not None:
+            archive_config(previous)
             atomic_write(BACKUP, previous, 0o600)
         atomic_write(ACTIVE, candidate, 0o600)
+        add_run_detail("Installed candidate config with owner-only permissions")
         installed = True
         activation_attempted = True
+        add_run_detail("Requested VPN container activation; waiting for host manager")
         activation = host_request("activate-config", candidate_key)
+        if activation.get("config_loaded") is not True:
+            raise RuntimeError("Host manager did not confirm the selected config is active: " + str(activation.get("message", "verification unavailable")))
+        add_run_detail("Host manager confirmed the expected config is active")
         completed = now()
         with STATE_LOCK:
             STATE["status"] = "success"
@@ -484,6 +605,9 @@ def run_update(source, lock_acquired=False):
                                "error": activation.get("message", "Tunnel IP probe unavailable")}
             STATE["next_run_at"] = (dt.datetime.now(UTC) + dt.timedelta(seconds=STATE["interval_seconds"])).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         record_history({"started_at": started, "finished_at": completed, "result": "success", "source": source, "error": None, "duration_seconds": round(time.monotonic() - start_mono, 1)})
+        archive_config(candidate)
+        add_run_detail("Generation completed successfully")
+        add_generator_log(started, source, "success", STATE.get("_generator_details", []), completed)
         log_event("info", "New config installed and activated; restarted %d VPN-scoped container(s)" % int(activation.get("restarted_count", 1)))
         return True
     except Exception as exc:
@@ -518,8 +642,13 @@ def run_update(source, lock_acquired=False):
         record_history({"started_at": started, "finished_at": completed, "result": "failed", "source": source,
                         "error": error, "duration_seconds": round(time.monotonic() - start_mono, 1)})
         log_event("error", error)
+        add_run_detail("Generation failed: " + error[:300])
+        add_generator_log(started, source, "failed", STATE.get("_generator_details", []), completed)
         return False
     finally:
+        STATE.pop("_generator_details", None)
+        STATE.pop("generator_stage", None)
+        with STATE_LOCK: save_state(STATE)
         UPDATE_LOCK.release()
 
 def process_ui_command():
@@ -590,6 +719,46 @@ def process_ui_command():
                 save_state(STATE)
             log_event("info", "Schedule interval changed to %d seconds" % seconds)
             result = {"id": request_id, "ok": True, "message": "Interval saved"}
+    elif action == "config-retention":
+        try:
+            seconds = int(command.get("retention_seconds"))
+            if seconds < 3600 or seconds > 365 * 86400: raise ValueError
+        except (ValueError, TypeError):
+            result = {"id": request_id, "ok": False, "message": "Retention must be between 1 hour and 365 days"}
+        else:
+            STATE["config_retention_seconds"] = seconds
+            with db_session() as conn:
+                for row in conn.execute("SELECT id,saved_at FROM saved_configs").fetchall():
+                    saved_at = dt.datetime.fromisoformat(row["saved_at"].replace("Z", "+00:00"))
+                    expires_at = (saved_at + dt.timedelta(seconds=seconds)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                    conn.execute("UPDATE saved_configs SET expires_at=? WHERE id=?", (expires_at, row["id"]))
+                conn.commit()
+            prune_archives()
+            result = {"id": request_id, "ok": True, "message": "Saved config retention updated"}
+    elif action == "delete-saved-config":
+        config_id = command.get("archive_id", "")
+        if not re.fullmatch(r"[a-f0-9]{32}", config_id):
+            result = {"id": request_id, "ok": False, "message": "Invalid saved config"}
+        else:
+            with db_session() as conn:
+                conn.execute("DELETE FROM saved_configs WHERE id=?", (config_id,)); conn.commit()
+            try: (ARCHIVE_DIR / (config_id + ".conf")).unlink()
+            except FileNotFoundError: pass
+            prune_archives()
+            result = {"id": request_id, "ok": True, "message": "Saved config deleted"}
+    elif action == "restore-saved-config":
+        config_id = command.get("archive_id", "")
+        if not re.fullmatch(r"[a-f0-9]{32}", config_id):
+            result = {"id": request_id, "ok": False, "message": "Invalid saved config"}
+        elif UPDATE_LOCK.acquire(blocking=False):
+            try:
+                threading.Thread(target=restore_saved_config, args=(config_id,), daemon=True).start()
+                result = {"id": request_id, "ok": True, "pending": True, "message": "Saved config activation queued"}
+            except RuntimeError:
+                UPDATE_LOCK.release()
+                result = {"id": request_id, "ok": False, "message": "Could not start config activation"}
+        else:
+            result = {"id": request_id, "ok": False, "message": "A generator or activation is already running"}
     elif action == "warp-settings":
         try:
             settings = validate_warp_settings(command.get("warp_settings"))
@@ -628,8 +797,13 @@ def process_ui_command():
 
 
 def scheduler_loop():
+    last_archive_sweep = 0
     while not STOP.is_set():
         process_ui_command()
+        if time.monotonic() - last_archive_sweep >= 60:
+            try: prune_archives()
+            except Exception: pass
+            last_archive_sweep = time.monotonic()
         with STATE_LOCK:
             due = STATE.get("next_run_at")
             interval = STATE["interval_seconds"]
@@ -660,9 +834,10 @@ def probe_loop():
             ip = result.get("ip")
             ipaddress.ip_address(ip or "")
             with STATE_LOCK:
-                STATE["ip"] = {"address": ip, "checked_at": now(), "error": None}
+                not_loaded = bool(expected_key) and result.get("config_loaded") is not True
+                STATE["ip"] = {"address": ip, "checked_at": now(), "error": (result.get("message") or "Selected config is not active in the VPN tunnel") if not_loaded else None}
                 if expected_key:
-                    STATE["pending_apply"] = result.get("config_loaded") is not True
+                    STATE["pending_apply"] = not_loaded
                 save_state(STATE)
         except Exception as exc:
             with STATE_LOCK:
@@ -676,10 +851,16 @@ def main():
     init_db()
     global STATE
     STATE = load_state()
+    if STATE.get("status") == "running":
+        STATE["status"] = "failed"
+        STATE["last_error"] = "The previous generator process stopped before it completed. A new attempt will follow the configured schedule."
+        log_event("warning", "Recovered an interrupted generator run from the previous process")
     set_active_config_filename(STATE["config_filename"])
     with STATE_LOCK:
         save_state(STATE)
     active, _ = active_config()
+    if active:
+        archive_config(active)
     if active:
         last_generated = None
         last_success = STATE.get("last_success_at")

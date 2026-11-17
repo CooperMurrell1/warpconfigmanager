@@ -53,6 +53,7 @@ export default function ConfigPage() {
         <GlassCard p="6"><Text color="gray.400" fontSize="xs" fontWeight="700" letterSpacing="0.08em">GENERATOR STATUS</Text><Box mt="2"><StatusBadge status={state?.status} /></Box></GlassCard>
         <GlassCard p="6"><Detail label="Last successful update">{when(state?.last_success_at)}</Detail></GlassCard>
       </SimpleGrid>
+      {state?.status === "running" && state?.generator_stage && <GlassCard p="4" mb="5"><Text color="cyan.200" fontSize="sm">{state.generator_stage}</Text></GlassCard>}
 
       <GlassCard p={{ base: "5", md: "7" }} mb="5">
         <Heading color="gray.50" size="md" mb="6">Interface and peer details</Heading>
