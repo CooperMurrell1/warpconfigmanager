@@ -4,6 +4,10 @@ CONTROL=/opt/warp-manager/control/warp-config-manager
 REQUEST="$CONTROL/manager-request.json"
 RESULT="$CONTROL/manager-result.json"
 
+log() {
+  printf '%s [warp-vpn-manager] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
 if [ ! -f "$REQUEST" ] || [ -L "$REQUEST" ]; then exit 1; fi
 ID=$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([a-f0-9]\{32\}\)".*/\1/p' "$REQUEST" | head -n 1)
 ACTION=$(sed -n 's/.*"action"[[:space:]]*:[[:space:]]*"\([a-z-]*\)".*/\1/p' "$REQUEST" | head -n 1)
@@ -12,6 +16,7 @@ case "$ID" in ''|*[!a-f0-9]*) exit 1 ;; esac
 case "$ACTION" in probe-tunnel-ip|activate-config) ;; *) exit 1 ;; esac
 case "$EXPECTED_KEY" in *[!A-Za-z0-9+/=]*) exit 1 ;; esac
 [ "$ACTION" != activate-config ] || [ -n "$EXPECTED_KEY" ] || exit 1
+log "request accepted id=$ID action=$ACTION"
 
 ok=true
 message=ok
@@ -19,9 +24,12 @@ ip=""
 config_loaded=null
 restarted_count=0
 dependent_count=0
+dependent_failed_count=0
+dependent_ids=""
 if [ -n "$EXPECTED_KEY" ]; then config_loaded=false; fi
 
 probe_ip() {
+  log "checking public IP from inside qbittorrentvpn"
   if docker exec qbittorrentvpn sh -c 'command -v curl >/dev/null 2>&1'; then
     probe_tool=curl
   elif docker exec qbittorrentvpn sh -c 'command -v wget >/dev/null 2>&1'; then
@@ -44,9 +52,10 @@ probe_ip() {
     if [ "$probe_status" -eq 0 ]; then
       case "$value" in
         ''|*[!0-9.]*) saw_invalid=true ;;
-        *) ip="$value"; return 0 ;;
+        *) ip="$value"; log "public IP probe succeeded"; return 0 ;;
       esac
     fi
+    log "public IP probe attempt $((attempt + 1)) failed (exit=$probe_status)"
     attempt=$((attempt + 1))
     [ "$attempt" -ge 5 ] || sleep 2
   done
@@ -63,7 +72,10 @@ key_is_loaded() {
   interfaces=$(docker exec qbittorrentvpn wg show interfaces 2>/dev/null || true)
   for interface in $interfaces; do
     public_key=$(docker exec qbittorrentvpn wg show "$interface" public-key 2>/dev/null || true)
-    if [ "$public_key" = "$EXPECTED_KEY" ]; then return 0; fi
+    if [ "$public_key" = "$EXPECTED_KEY" ]; then
+      log "expected WireGuard key is loaded on interface $interface"
+      return 0
+    fi
   done
   return 1
 }
@@ -78,28 +90,41 @@ elif [ "$ACTION" = activate-config ]; then
     ok=false
     message=vpn-container-metadata-unavailable
   else
+    log "qBittorrentVPN container id=$vpn_id; scanning all containers for a shared network namespace"
     dependents=""
     for container in $(docker ps --all --quiet --no-trunc); do
       [ "$container" != "$vpn_id" ] || continue
       network_mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$container" 2>/dev/null || true)
+      container_name=$(docker inspect --format '{{.Name}}' "$container" 2>/dev/null || true)
+      log "examining container name=${container_name#/} id=$container network_mode=${network_mode:-unavailable}"
       case "$network_mode" in
         container:*)
           namespace_ref=${network_mode#container:}
           namespace_id=$(docker inspect --format '{{.Id}}' "$namespace_ref" 2>/dev/null || true)
+          log "container=${container_name#/} id=$container network_mode=$network_mode namespace_id=${namespace_id:-unresolved}"
           if [ "$namespace_id" = "$vpn_id" ]; then
             dependents="$dependents $container"
             dependent_count=$((dependent_count + 1))
+            if [ -n "$dependent_ids" ]; then dependent_ids="$dependent_ids,$container"; else dependent_ids="$container"; fi
+            log "matched routed dependent name=${container_name#/} id=$container running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)"
+          else
+            log "container name=${container_name#/} id=$container uses a different or unresolved network namespace"
           fi
           ;;
+        *) log "container name=${container_name#/} id=$container does not share a container network namespace" ;;
       esac
     done
+    log "namespace discovery complete; matched=$dependent_count ids=${dependent_ids:-none}"
 
+    log "restarting qBittorrentVPN"
     if ! docker restart --time 30 qbittorrentvpn >/dev/null 2>&1; then
       ok=false
       message=vpn-container-restart-failed
+      log "qBittorrentVPN restart failed"
     else
       restarted_count=1
       vpn_running=$(docker inspect --format '{{.State.Running}}' qbittorrentvpn 2>/dev/null || true)
+      log "qBittorrentVPN restart command completed; running=$vpn_running"
       if [ "$vpn_running" != true ]; then
         ok=false
         message=vpn-container-not-ready
@@ -112,9 +137,11 @@ elif [ "$ACTION" = activate-config ]; then
         for container in $dependents; do
           (dependent_running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)
            if [ "$dependent_running" = true ]; then
-             docker restart --time 15 "$container" >/dev/null 2>&1
+             log "restarting running routed dependent id=$container"
+             if docker restart --time 15 "$container" >/dev/null 2>&1; then log "restart succeeded for routed dependent id=$container"; else log "restart failed for routed dependent id=$container"; exit 1; fi
            else
-             docker start "$container" >/dev/null 2>&1
+             log "starting stopped routed dependent id=$container"
+             if docker start "$container" >/dev/null 2>&1; then log "start succeeded for routed dependent id=$container"; else log "start failed for routed dependent id=$container"; exit 1; fi
            fi) &
           restart_pids="$restart_pids $!"
         done
@@ -124,31 +151,37 @@ elif [ "$ACTION" = activate-config ]; then
             restarted_count=$((restarted_count + 1))
           else
             restart_failed=true
+            dependent_failed_count=$((dependent_failed_count + 1))
           fi
         done
         if [ "$restart_failed" = true ]; then
           ok=false
           message=dependent-container-restart-failed
         fi
+        log "dependent restart batch complete; matched=$dependent_count restarted_total=$restarted_count failed_count=$dependent_failed_count"
       fi
     fi
   fi
 
   if [ "$ok" = true ]; then
+    log "waiting up to 90 seconds for the expected WireGuard key"
     loaded=false
     attempt=0
     while [ "$attempt" -lt 90 ]; do
       if key_is_loaded; then loaded=true; break; fi
       attempt=$((attempt + 1))
+      if [ $((attempt % 10)) -eq 0 ]; then log "WireGuard key verification still waiting; elapsed=${attempt}s"; fi
       sleep 1
     done
     if [ "$loaded" = true ]; then
       config_loaded=true
       message=config-activated
+      log "config activation verified"
       probe_ip || true
     else
       ok=false
       message=generated-config-not-active
+      log "config activation verification failed"
     fi
   fi
 else
@@ -165,7 +198,8 @@ fi
 
 umask 077
 tmp=$(mktemp "$CONTROL/.result.XXXXXX")
-printf '{"id":"%s","ok":%s,"message":"%s","ip":"%s","config_loaded":%s,"restarted_count":%s,"dependent_count":%s,"finished_at":"%s"}\n' \
-  "$ID" "$ok" "$message" "$ip" "$config_loaded" "$restarted_count" "$dependent_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+printf '{"id":"%s","ok":%s,"message":"%s","ip":"%s","config_loaded":%s,"restarted_count":%s,"dependent_count":%s,"dependent_failed_count":%s,"dependent_ids":"%s","finished_at":"%s"}\n' \
+  "$ID" "$ok" "$message" "$ip" "$config_loaded" "$restarted_count" "$dependent_count" "$dependent_failed_count" "$dependent_ids" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+log "request complete id=$ID ok=$ok message=$message vpn_restarted=$restarted_count dependents_matched=$dependent_count dependents_failed=$dependent_failed_count dependent_ids=${dependent_ids:-none}"
 chmod 0600 "$tmp"
 mv -f "$tmp" "$RESULT"

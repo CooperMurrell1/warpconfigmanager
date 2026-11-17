@@ -735,6 +735,15 @@ def host_request(action, expected_public_key=None):
                 if result.get("id") == request_id:
                     if result.get("message"):
                         result["message"] = friendly_host_message(result["message"])
+                    if action == "activate-config" and isinstance(result.get("dependent_count"), int):
+                        dependent_ids = [value for value in result.get("dependent_ids", "").split(",") if re.fullmatch(r"[a-f0-9]{64}", value)]
+                        summary = "Host restart summary: matched %d routed container(s); restarted or started %d total container(s); dependent restart failures=%d; container IDs=%s." % (result["dependent_count"], int(result.get("restarted_count", 0)), int(result.get("dependent_failed_count", 0)), ",".join(dependent_ids) or "none")
+                        log_event("info" if result.get("ok") else "warning", summary, "config")
+                        details = STATE.get("_generator_details")
+                        if isinstance(details, list):
+                            timestamp = now()
+                            details.append(timestamp + " — " + summary)
+                            details.extend(timestamp + " — Routed container ID: " + value for value in dependent_ids)
                     if result.get("ok"):
                         if action == "activate-config" and not isinstance(result.get("dependent_count"), int):
                             log_event("warning", "The installed host VPN helper did not report routed-container discovery; update it with host-setup.sh")
