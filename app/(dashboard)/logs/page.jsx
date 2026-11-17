@@ -16,12 +16,12 @@ export default function LogsPage() {
         return <GlassCard key={`${run.started_at}-${i}`} p="0" overflow="hidden">
           <Box as="details" p={{ base: "4", md: "5" }}>
             <Box as="summary" cursor="pointer" listStylePosition="inside">
-              <Badge colorPalette={run.result === "success" ? "green" : "red"} ml="2">{run.result}</Badge>
+              <Badge colorPalette={run.result === "success" ? "green" : run.result === "running" ? "cyan" : "red"} ml="2">{run.result}</Badge>
               <Text as="span" color="gray.100" fontWeight="700" ml="3">{when(run.started_at)}</Text>
               <Text as="span" color="gray.400" fontSize="sm" ml="3">{run.source} · finished {when(run.finished_at)}</Text>
             </Box>
             <Stack mt="5" pl={{ base: "2", md: "7" }} gap="2">
-              {details.map((line, index) => <Text key={index} color="gray.300" fontSize="sm" fontFamily="mono">{when(run.started_at)} — {line}</Text>)}
+              {details.map((line, index) => <Text key={index} color="gray.300" fontSize="sm" fontFamily="mono">{line}</Text>)}
               {!details.length && <Text color="gray.400">No diagnostic details were recorded.</Text>}
             </Stack>
           </Box>

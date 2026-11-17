@@ -101,7 +101,11 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_service_logs_id ON service_logs(id DESC)")
         conn.execute("CREATE TABLE IF NOT EXISTS generator_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, source TEXT NOT NULL, result TEXT NOT NULL, details TEXT NOT NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_generator_logs_id ON generator_logs(id DESC)")
-        conn.execute("CREATE TABLE IF NOT EXISTS saved_configs (id TEXT PRIMARY KEY, filename TEXT NOT NULL, saved_at TEXT NOT NULL, expires_at TEXT NOT NULL, sha256 TEXT UNIQUE NOT NULL, address TEXT NOT NULL, endpoint TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS saved_configs (id TEXT PRIMARY KEY, filename TEXT NOT NULL, saved_at TEXT NOT NULL, expires_at TEXT NOT NULL, sha256 TEXT UNIQUE NOT NULL, address TEXT NOT NULL, endpoint TEXT NOT NULL, account_type TEXT, account_id TEXT, device_id TEXT, account_created_at TEXT, account_expires_at TEXT)")
+        saved_columns = {row["name"] for row in conn.execute("PRAGMA table_info(saved_configs)").fetchall()}
+        for column in ("account_type", "account_id", "device_id", "account_created_at", "account_expires_at"):
+            if column not in saved_columns:
+                conn.execute("ALTER TABLE saved_configs ADD COLUMN " + column + " TEXT")
         conn.commit()
 
 
@@ -323,7 +327,7 @@ def load_state():
         state["history"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,result,source,error,duration_seconds FROM update_history ORDER BY id DESC LIMIT 100").fetchall()][::-1]
         state["logs"] = [dict(r) for r in conn.execute("SELECT at,level,message FROM service_logs ORDER BY id DESC LIMIT 200").fetchall()][::-1]
         state["generator_logs"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,source,result,details FROM generator_logs ORDER BY id DESC LIMIT 100").fetchall()][::-1]
-        state["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,address,endpoint FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+        state["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
     state["interval_seconds"] = max(MIN_INTERVAL, min(MAX_INTERVAL, int(state.get("interval_seconds", INTERVAL_DEFAULT))))
     try:
         state["config_retention_seconds"] = max(3600, min(365 * 86400, int(state.get("config_retention_seconds", 30 * 86400))))
@@ -426,11 +430,11 @@ def generate_candidate(settings):
     except OSError:
         raise RuntimeError("Generator could not be started")
     if result.returncode != 0:
-        STATE.setdefault("_generator_details", []).extend(sanitized_generator_lines(result.stderr))
+        STATE.setdefault("_generator_details", []).extend(now() + " — " + line for line in sanitized_generator_lines(result.stderr))
         raise RuntimeError("Generator failed (exit code %d); stderr suppressed to protect secrets" % result.returncode)
     if not result.stdout.strip():
         raise RuntimeError("Generator returned an empty config")
-    STATE.setdefault("_generator_details", []).extend(sanitized_generator_lines(result.stderr))
+    STATE.setdefault("_generator_details", []).extend(now() + " — " + line for line in sanitized_generator_lines(result.stderr))
     return result.stdout, parse_warp_account_info(result.stderr)
 
 
@@ -442,14 +446,34 @@ def sanitized_generator_lines(stderr):
     safe = []
     for raw in stderr.splitlines():
         line = raw.strip()
-        if any(tag.lower() in line.lower() for tag in allowed):
-            safe.append(line[:180])
+        matched = next((tag for tag in allowed if tag.lower() in line.lower()), None)
+        if matched:
+            safe.append(matched)
         elif line.startswith("[VERBOSE] Generated public key:"):
             safe.append("[VERBOSE] Interface public key derived (value hidden)")
     return safe
 
 
-def archive_config(text, filename=None):
+def add_generator_log(started_at, source, result, details, finished_at=None):
+    """Persist a sanitized run entry continuously so it survives failures and restarts."""
+    finished_at = finished_at or now()
+    encoded = json.dumps(details[-160:])
+    with db_session() as conn:
+        row = conn.execute("SELECT id FROM generator_logs WHERE started_at=? ORDER BY id DESC LIMIT 1", (started_at,)).fetchone()
+        if row:
+            conn.execute("UPDATE generator_logs SET finished_at=?,source=?,result=?,details=? WHERE id=?",
+                         (finished_at, source, result, encoded, row["id"]))
+        else:
+            conn.execute("INSERT INTO generator_logs(started_at,finished_at,source,result,details) VALUES(?,?,?,?,?)",
+                         (started_at, finished_at, source, result, encoded))
+        conn.execute("DELETE FROM generator_logs WHERE id NOT IN (SELECT id FROM generator_logs ORDER BY id DESC LIMIT 100)")
+        conn.commit()
+        rows = conn.execute("SELECT started_at,finished_at,source,result,details FROM generator_logs ORDER BY id DESC LIMIT 100").fetchall()
+    STATE["generator_logs"] = [dict(row) for row in rows][::-1]
+    write_public_state(STATE)
+
+
+def archive_config(text, filename=None, account_info=None):
     try:
         details = parse_config(text)
         import hashlib
@@ -459,12 +483,20 @@ def archive_config(text, filename=None):
         saved = now()
         expires = (dt.datetime.now(UTC) + dt.timedelta(seconds=STATE.get("config_retention_seconds", 30 * 86400))).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         with db_session() as conn:
-            if conn.execute("SELECT id FROM saved_configs WHERE sha256=?", (digest,)).fetchone():
+            account = account_info or STATE.get("warp_account") or {}
+            existing = conn.execute("SELECT id FROM saved_configs WHERE sha256=?", (digest,)).fetchone()
+            if existing:
+                conn.execute("UPDATE saved_configs SET account_type=COALESCE(account_type,?),account_id=COALESCE(account_id,?),device_id=COALESCE(device_id,?),account_created_at=COALESCE(account_created_at,?),account_expires_at=COALESCE(account_expires_at,?) WHERE id=?",
+                             (account.get("account_type"), account.get("account_id"), account.get("device_id"), account.get("created_at"), account.get("expires_at"), existing["id"]))
+                conn.commit()
+                STATE["saved_configs"] = [dict(row) for row in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+                write_public_state(STATE)
                 return
             config_id = secrets.token_hex(16)
             atomic_write(ARCHIVE_DIR / (config_id + ".conf"), text, 0o600)
-            conn.execute("INSERT INTO saved_configs(id,filename,saved_at,expires_at,sha256,address,endpoint) VALUES(?,?,?,?,?,?,?)",
-                         (config_id, filename or STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), saved, expires, digest, details["address"], details["endpoint"]))
+            conn.execute("INSERT INTO saved_configs(id,filename,saved_at,expires_at,sha256,address,endpoint,account_type,account_id,device_id,account_created_at,account_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (config_id, filename or STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), saved, expires, digest, details["address"], details["endpoint"],
+                          account.get("account_type"), account.get("account_id"), account.get("device_id"), account.get("created_at"), account.get("expires_at")))
             conn.commit()
         prune_archives()
     except Exception as exc:
@@ -483,7 +515,7 @@ def prune_archives():
             except FileNotFoundError: pass
         if ids: conn.executemany("DELETE FROM saved_configs WHERE id=?", [(item,) for item in ids])
         conn.commit()
-        STATE["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,address,endpoint FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+        STATE["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
     write_public_state(STATE)
 
 
@@ -491,8 +523,13 @@ def restore_saved_config(config_id):
     previous = None
     installed = False
     try:
+        with STATE_LOCK:
+            STATE["status"] = "running"
+            STATE["generator_stage"] = "Activating saved config"
+            STATE["last_error"] = None
+            save_state(STATE)
         with db_session() as conn:
-            row = conn.execute("SELECT filename FROM saved_configs WHERE id=?", (config_id,)).fetchone()
+            row = conn.execute("SELECT filename,account_type,account_id,device_id,account_created_at,account_expires_at FROM saved_configs WHERE id=?", (config_id,)).fetchone()
         if not row: raise RuntimeError("Saved config was not found")
         candidate = (ARCHIVE_DIR / (config_id + ".conf")).read_text(encoding="utf-8")
         validate_config(candidate)
@@ -505,18 +542,29 @@ def restore_saved_config(config_id):
         with STATE_LOCK:
             STATE["pending_apply"] = False
             STATE["status"] = "success"
+            STATE.pop("generator_stage", None)
+            STATE["last_error"] = None
+            STATE["last_success_at"] = now()
+            STATE["next_run_at"] = (dt.datetime.now(UTC) + dt.timedelta(seconds=STATE["interval_seconds"])).replace(microsecond=0).isoformat().replace("+00:00", "Z")
             STATE["ip"] = {"address": result.get("ip"), "checked_at": now(), "error": None}
+            account = {"account_type": row["account_type"], "account_id": row["account_id"], "device_id": row["device_id"],
+                       "created_at": row["account_created_at"], "expires_at": row["account_expires_at"]}
+            STATE["warp_account"] = account if any(account.values()) else None
             save_state(STATE)
         log_event("info", "Restored and activated saved config %s" % row["filename"])
     except Exception as exc:
+        rollback_reactivated = False
         if installed and previous:
             try:
                 atomic_write(ACTIVE, previous, 0o600)
-                host_request("activate-config", interface_public_key(previous))
+                rollback_reactivated = host_request("activate-config", interface_public_key(previous)).get("config_loaded") is True
             except Exception: pass
         with STATE_LOCK:
-            STATE["pending_apply"] = True
+            STATE["pending_apply"] = (not rollback_reactivated) if installed else STATE.get("pending_apply", False)
+            STATE["status"] = "failed"
+            STATE.pop("generator_stage", None)
             STATE["last_error"] = str(exc)[:300]
+            STATE["ip"] = {"address": None, "checked_at": now(), "error": str(exc)[:250]}
             save_state(STATE)
         log_event("error", "Saved config activation failed: %s" % str(exc)[:250])
     finally:
@@ -551,6 +599,14 @@ def host_request(action, expected_public_key=None):
 def run_update(source, lock_acquired=False):
     if not lock_acquired and not UPDATE_LOCK.acquire(blocking=False):
         return False
+    try:
+        return _run_update_locked(source)
+    finally:
+        if UPDATE_LOCK.locked():
+            UPDATE_LOCK.release()
+
+
+def _run_update_locked(source):
     started = now()
     start_mono = time.monotonic()
     previous, _ = active_config()
@@ -605,7 +661,7 @@ def run_update(source, lock_acquired=False):
                                "error": activation.get("message", "Tunnel IP probe unavailable")}
             STATE["next_run_at"] = (dt.datetime.now(UTC) + dt.timedelta(seconds=STATE["interval_seconds"])).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         record_history({"started_at": started, "finished_at": completed, "result": "success", "source": source, "error": None, "duration_seconds": round(time.monotonic() - start_mono, 1)})
-        archive_config(candidate)
+        archive_config(candidate, account_info=account)
         add_run_detail("Generation completed successfully")
         add_generator_log(started, source, "success", STATE.get("_generator_details", []), completed)
         log_event("info", "New config installed and activated; restarted %d VPN-scoped container(s)" % int(activation.get("restarted_count", 1)))
@@ -649,7 +705,6 @@ def run_update(source, lock_acquired=False):
         STATE.pop("_generator_details", None)
         STATE.pop("generator_stage", None)
         with STATE_LOCK: save_state(STATE)
-        UPDATE_LOCK.release()
 
 def process_ui_command():
     try:
@@ -781,6 +836,24 @@ def process_ui_command():
             result = {"id": request_id, "ok": True, "private_key": private.group(1)}
         except (OSError, UnicodeError, ValueError) as exc:
             result = {"id": request_id, "ok": False, "message": str(exc) or "Could not read the private key"}
+    elif action == "download-saved-config":
+        config_id = command.get("archive_id", "")
+        try:
+            if not re.fullmatch(r"[a-f0-9]{32}", config_id):
+                raise ValueError("Invalid saved config")
+            with db_session() as conn:
+                row = conn.execute("SELECT filename FROM saved_configs WHERE id=?", (config_id,)).fetchone()
+            if not row:
+                raise ValueError("Saved config was not found")
+            path = ARCHIVE_DIR / (config_id + ".conf")
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 32768:
+                raise ValueError("Saved config is unavailable")
+            content = path.read_text(encoding="utf-8")
+            validate_config(content)
+            safe_name = row["filename"] if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}\.conf", row["filename"]) else "saved-config.conf"
+            result = {"id": request_id, "ok": True, "config_content": content, "filename": safe_name}
+        except (OSError, UnicodeError, ValueError, subprocess.SubprocessError) as exc:
+            result = {"id": request_id, "ok": False, "message": str(exc) or "Could not read saved config"}
     else:
         result = {"id": request_id, "ok": False, "message": "Unsupported action"}
     atomic_write(UI_RESULT, json.dumps(result), 0o640)
@@ -821,7 +894,11 @@ def scheduler_loop():
         except ValueError:
             due_dt = dt.datetime.now(UTC) + dt.timedelta(seconds=5)
         if due_dt.timestamp() <= time.time():
-            run_update("scheduled")
+            if UPDATE_LOCK.acquire(blocking=False):
+                try:
+                    threading.Thread(target=run_update, args=("scheduled", True), daemon=True).start()
+                except RuntimeError:
+                    UPDATE_LOCK.release()
         STOP.wait(1)
 
 

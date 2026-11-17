@@ -1,11 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { Button, HStack, Table, Text } from "@chakra-ui/react";
+import { Box, Button, HStack, Table, Text } from "@chakra-ui/react";
 import { useDashboard, when } from "@/components/dashboard-context";
 import { GlassCard, PageHeader } from "@/components/dashboard-ui";
 
 function csrf() { const item = document.cookie.split("; ").find(v => v.startsWith("warp_csrf=")); return item ? decodeURIComponent(item.split("=").slice(1).join("=")) : ""; }
+
+function ActionGlyph({ name }) {
+  const paths = {
+    activate: <path d="M8 5v14l11-7z" fill="currentColor" stroke="none" />,
+    download: <><path d="M12 3v12m-5-5 5 5 5-5" /><path d="M5 18v3h14v-3" /></>,
+    delete: <><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3" /></>,
+  };
+  return <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+}
 
 export default function SavedConfigsPage() {
   const { state, refresh, setError, setNotice } = useDashboard();
@@ -31,8 +40,9 @@ export default function SavedConfigsPage() {
   }
   return <>
     <PageHeader eyebrow="Archive" title="Saved configs" description="Successful configurations are kept privately for a limited time. Up to 20 versions are retained." />
+    {state?.status === "running" && state?.generator_stage && <Text color="cyan.200" fontSize="sm" mb="4">{state.generator_stage}</Text>}
     <GlassCard p={{ base: "3", md: "5" }}>
-      {configs.length ? <Table.Root size="sm" variant="outline"><Table.Header><Table.Row><Table.ColumnHeader color="gray.300">Saved</Table.ColumnHeader><Table.ColumnHeader color="gray.300">File</Table.ColumnHeader><Table.ColumnHeader color="gray.300">Address</Table.ColumnHeader><Table.ColumnHeader color="gray.300">Endpoint</Table.ColumnHeader><Table.ColumnHeader color="gray.300">Expires</Table.ColumnHeader><Table.ColumnHeader color="gray.300">Actions</Table.ColumnHeader></Table.Row></Table.Header><Table.Body>{configs.map(item => <Table.Row key={item.id}><Table.Cell color="gray.200">{when(item.saved_at)}</Table.Cell><Table.Cell color="gray.200">{item.filename}</Table.Cell><Table.Cell color="gray.200">{item.address}</Table.Cell><Table.Cell color="gray.200">{item.endpoint}</Table.Cell><Table.Cell color="gray.400">{when(item.expires_at)}</Table.Cell><Table.Cell><HStack><Button size="xs" bg="cyan.400" color="gray.950" loading={busy === item.id} onClick={() => restore(item.id)}>Activate</Button><Button asChild size="xs" variant="outline" color="gray.100"><a href={`/api/saved-configs?archive_id=${encodeURIComponent(item.id)}`}>Download</a></Button><Button size="xs" colorPalette="red" variant="outline" loading={busy === item.id} onClick={() => remove(item.id)}>Delete</Button></HStack></Table.Cell></Table.Row>)}</Table.Body></Table.Root> : <Text color="gray.300" p="3">No saved configs yet. A config is archived after it activates successfully.</Text>}
+      {configs.length ? <Box overflowX="auto" rounded="xl" borderWidth="1px" borderColor="whiteAlpha.200"><Table.Root size="sm" variant="outline" minW="850px"><Table.Header><Table.Row bg="whiteAlpha.100"><Table.ColumnHeader color="gray.300" py="4">Saved</Table.ColumnHeader><Table.ColumnHeader color="gray.300" py="4">File</Table.ColumnHeader><Table.ColumnHeader color="gray.300" py="4">WARP account</Table.ColumnHeader><Table.ColumnHeader color="gray.300" py="4">WARP device</Table.ColumnHeader><Table.ColumnHeader color="gray.300" py="4">Expires</Table.ColumnHeader><Table.ColumnHeader color="gray.300" py="4" textAlign="right">Actions</Table.ColumnHeader></Table.Row></Table.Header><Table.Body>{configs.map((item, index) => <Table.Row key={item.id} bg={index % 2 ? "whiteAlpha.50" : "transparent"} _hover={{ bg: "cyan.950" }} transition="background 120ms ease"><Table.Cell color="gray.200" whiteSpace="nowrap">{when(item.saved_at)}</Table.Cell><Table.Cell color="gray.100" fontWeight="700">{item.filename}</Table.Cell><Table.Cell><Text color="gray.100">{item.account_type || "WARP"}</Text><Text color="gray.400" fontSize="xs" fontFamily="mono">{item.account_id || "Account ID unavailable"}</Text><Text color="gray.500" fontSize="xs">Created {item.account_created_at ? when(item.account_created_at) : "unknown"}</Text></Table.Cell><Table.Cell><Text color="gray.200" fontSize="xs" fontFamily="mono" wordBreak="break-all">{item.device_id || "Device ID unavailable"}</Text></Table.Cell><Table.Cell color="gray.400" whiteSpace="nowrap">{when(item.expires_at)}<Text color="gray.500" fontSize="xs">Account: {when(item.account_expires_at)}</Text></Table.Cell><Table.Cell><HStack justify="end" gap="2"><Button aria-label="Activate saved config" title="Activate saved config" size="sm" minW="9" p="0" bg="cyan.400" color="gray.950" loading={busy === item.id} disabled={state?.status === "running"} onClick={() => restore(item.id)}><ActionGlyph name="activate" /></Button><Button asChild aria-label="Download saved config" title="Download saved config" size="sm" minW="9" p="0" variant="outline" color="gray.100" borderColor="whiteAlpha.300"><a href={`/api/saved-configs?archive_id=${encodeURIComponent(item.id)}`}><ActionGlyph name="download" /></a></Button><Button aria-label="Delete saved config" title="Delete saved config" size="sm" minW="9" p="0" colorPalette="red" variant="outline" loading={busy === item.id} onClick={() => remove(item.id)}><ActionGlyph name="delete" /></Button></HStack></Table.Cell></Table.Row>)}</Table.Body></Table.Root></Box> : <Text color="gray.300" p="3">No saved configs yet. A config is archived after it activates successfully.</Text>}
     </GlassCard>
   </>;
 }
