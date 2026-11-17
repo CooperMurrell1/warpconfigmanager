@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSession, sessionCookieOptions } from "@/lib/session";
+import { registerJellyfinSignIn } from "@/lib/account-db";
 import { requireCsrf } from "@/lib/route-security";
 
 export const runtime = "nodejs";
@@ -31,8 +32,15 @@ export async function POST(request) {
   try { result = await response.json(); } catch { return NextResponse.json({ error: "Jellyfin returned an invalid login response" }, { status: 502 }); }
   const user = result?.User;
   if (!result?.AccessToken || !user?.Id || !user?.Name) return NextResponse.json({ error: "Jellyfin returned an incomplete login response" }, { status: 502 });
-  const session = createSession({ userId: user.Id, username: user.Name, token: result.AccessToken, isAdmin: user.Policy?.IsAdministrator === true });
-  const out = NextResponse.json({ ok: true, username: user.Name });
+  let registration;
+  try {
+    registration = registerJellyfinSignIn({ jellyfinUserId: user.Id, jellyfinUsername: user.Name, isAdministrator: user.Policy?.IsAdministrator === true });
+  } catch {
+    return NextResponse.json({ error: "Could not save this account in the dashboard database" }, { status: 503 });
+  }
+  if (registration.error) return NextResponse.json({ error: registration.error }, { status: 403 });
+  const session = createSession({ userId: registration.user.Id });
+  const out = NextResponse.json({ ok: true, username: registration.user.Name });
   out.cookies.set(session.name, session.value, sessionCookieOptions());
   return out;
 }

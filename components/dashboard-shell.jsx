@@ -90,6 +90,7 @@ function DashboardLoadError({ error, refresh, logout }) {
 
 function ShellContent({ children }) {
   const { state, loading, error, notice, logout, refresh } = useDashboard();
+  const visibleNavItems = navItems.filter(item => (!item.adminOnly || state?.current_user_is_admin) && (state?.current_user_role !== "viewer" || item.href === "/"));
 
   if (loading) return <DashboardLoading />;
   if (!state) return <DashboardLoadError error={error} refresh={refresh} logout={logout} />;
@@ -115,7 +116,7 @@ function ShellContent({ children }) {
           <Box as="img" src="/jellyfin-icon.svg" alt="Jellyfin" width="10" height="10" />
           <Box><Text color="cyan.300" fontWeight="900" fontSize="xs" letterSpacing="0.18em">WARP TUNNEL</Text><Text color="gray.50" fontWeight="800" fontSize="lg" mt="1">Config Manager</Text></Box>
         </HStack>
-        <Stack gap="2">{navItems.filter(item => !item.adminOnly || state?.current_user_is_admin).map(item => <NavItem key={item.href} item={item} />)}</Stack>
+        <Stack gap="2">{visibleNavItems.map(item => <NavItem key={item.href} item={item} />)}</Stack>
       </Flex>
 
       <Box ml={{ base: "0", md: "260px" }} minH="100vh">
@@ -140,7 +141,7 @@ function ShellContent({ children }) {
           <HStack gap="3">
             <Box display={{ base: "none", sm: "block" }} textAlign="right">
               <Text color="gray.100" fontSize="sm" fontWeight="700">{state?.current_user || "Jellyfin user"}</Text>
-              <Text color="gray.400" fontSize="xs">{state?.current_user_is_admin ? "Administrator" : "Viewer"}</Text>
+              <Text color="gray.400" fontSize="xs">{state?.current_user_role === "admin" ? "Administrator" : state?.current_user_role === "readonly" ? "Read only" : "Viewer"}</Text>
             </Box>
             <ProfileAvatar name={state?.current_user} />
             <Button size="sm" variant="outline" borderColor="rgba(148, 163, 184, 0.25)" color="gray.100" bg="rgba(15, 23, 42, 0.5)" _hover={{ bg: "rgba(148, 163, 184, 0.14)" }} onClick={logout}>Sign out</Button>
@@ -149,14 +150,14 @@ function ShellContent({ children }) {
 
         <Box display={{ base: "block", md: "none" }} px="4" pt="4">
           <HStack width="full" minW="0" overflow="hidden" bg="rgba(15, 23, 42, 0.66)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.16)" backdropFilter="blur(18px)" rounded="2xl" p="1" gap="1">
-            {navItems.filter(item => !item.adminOnly || state?.current_user_is_admin).map(item => <NavItem key={item.href} item={item} compact />)}
+            {visibleNavItems.map(item => <NavItem key={item.href} item={item} compact />)}
           </HStack>
         </Box>
 
         <Container className="dashboard-page" maxW="7xl" px={{ base: "4", md: "7" }} py={{ base: "6", md: "9" }}>
           {error && <Alert.Root status="error" mb="5" rounded="xl" bg="rgba(127, 29, 29, 0.55)" color="red.50"><Alert.Indicator /><Alert.Title>{error}</Alert.Title></Alert.Root>}
           {notice && <Alert.Root status="success" mb="5" rounded="xl" bg="rgba(6, 78, 59, 0.55)" color="green.50"><Alert.Indicator /><Alert.Title>{notice}</Alert.Title></Alert.Root>}
-          {state && !state.current_user_is_admin && <Alert.Root status="warning" mb="5" rounded="xl" bg="rgba(120, 53, 15, 0.56)" color="orange.50"><Alert.Indicator /><Alert.Title>A Jellyfin administrator account is required to change settings or update the config.</Alert.Title></Alert.Root>}
+          {state && state.current_user_role !== "admin" && <Alert.Root status="warning" mb="5" rounded="xl" bg="rgba(120, 53, 15, 0.56)" color="orange.50"><Alert.Indicator /><Alert.Title>{state.current_user_role === "viewer" ? "Viewer access is limited to the home page." : "Read only access. Administrator permissions are required to make changes."}</Alert.Title></Alert.Root>}
           {state?.pending_apply && <Alert.Root status="warning" mb="5" rounded="xl" bg="rgba(120, 53, 15, 0.56)" color="orange.50"><Alert.Indicator /><Alert.Title>{state?.ip?.error ? `The selected config is not active in the running VPN tunnel: ${state.ip.error}` : "The selected config is not confirmed active in the running VPN tunnel. Check the latest generator log for activation details."}</Alert.Title></Alert.Root>}
           {children}
         </Container>

@@ -62,7 +62,7 @@ export default function LoginPage() {
               <Box as="img" src="/jellyfin-icon.svg" alt="Jellyfin" width="16" height="16" mx="auto" mb="4" filter="drop-shadow(0 8px 24px rgba(0, 164, 220, 0.28))" />
               <Text color="cyan.200" fontSize="xs" fontWeight="800" letterSpacing="0.16em">WARP CONFIG MANAGER</Text>
               <Heading color="gray.50" mt="2" size="xl">Log in with Jellyfin</Heading>
-              <Text mt="2" color="gray.300">Use your Jellyfin account.</Text>
+              <Text mt="2" color="gray.300">Sign in with Jellyfin. Your dashboard account is registered after your first successful sign in, and your password remains on the Jellyfin server.</Text>
             </Box>
             {error && <Alert.Root status="error" rounded="xl" bg="rgba(127, 29, 29, 0.55)" color="red.50"><Alert.Indicator /><Alert.Title>{error}</Alert.Title></Alert.Root>}
             <form onSubmit={submit}>

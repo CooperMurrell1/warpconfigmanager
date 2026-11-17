@@ -66,8 +66,8 @@ export default function SettingsPage() {
             <Field.Root invalid={!intervalValid}>
               <Field.Label color="gray.200">Refresh every</Field.Label>
               <Stack direction={{ base: "column", sm: "row" }} gap="3">
-                <Input id="interval-value" type="number" min="0.0001" step="any" value={intervalValue} onChange={event => setIntervalValue(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" _placeholder={{ color: "gray.500" }} />
-                <Box as="select" id="interval-unit" value={intervalUnit} onChange={event => setIntervalUnit(event.target.value)} aria-label="Refresh interval unit" minW="32" h="10" px="3" rounded="md" bg="rgba(2, 6, 23, 0.92)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50">
+                <Input id="interval-value" type="number" min="0.0001" step="any" value={intervalValue} disabled={!admin} onChange={event => setIntervalValue(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" _placeholder={{ color: "gray.500" }} />
+                <Box as="select" id="interval-unit" value={intervalUnit} disabled={!admin} onChange={event => setIntervalUnit(event.target.value)} aria-label="Refresh interval unit" minW="32" h="10" px="3" rounded="md" bg="rgba(2, 6, 23, 0.92)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50">
                   <option value="hours">Hours</option>
                   <option value="days">Days</option>
                   <option value="weeks">Weeks</option>
@@ -86,7 +86,7 @@ export default function SettingsPage() {
           <Stack gap="4">
             <Field.Root>
               <Field.Label color="gray.200">Managed filename</Field.Label>
-              <Input id="config-filename" value={filename} onChange={event => setFilename(event.target.value)} readOnly={!filenameEditing} placeholder="wg0.conf" bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" _readOnly={{ opacity: 0.82, cursor: "default" }} _placeholder={{ color: "gray.500" }} />
+              <Input id="config-filename" value={filename} onChange={event => setFilename(event.target.value)} readOnly={!filenameEditing} disabled={!admin} placeholder="wg0.conf" bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" _readOnly={{ opacity: 0.82, cursor: "default" }} _placeholder={{ color: "gray.500" }} />
             </Field.Root>
             {filenameEditing ? (
               <Stack direction={{ base: "column", sm: "row" }} gap="3">
@@ -104,8 +104,8 @@ export default function SettingsPage() {
         <Heading color="gray.50" size="md" mb="2">Saved config retention</Heading>
         <Text color="gray.400" fontSize="sm" mb="5">Automatically delete archived configs after this period. The archive keeps at most 20 configs.</Text>
         <Stack direction={{ base: "column", sm: "row" }} gap="3" maxW="lg">
-          <Input id="retention-value" type="number" min="1" step="1" value={retentionValue} onChange={event => setRetentionValue(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
-          <Box as="select" id="retention-unit" value={retentionUnit} onChange={event => setRetentionUnit(event.target.value)} aria-label="Saved config retention unit" minW="32" h="10" px="3" rounded="md" bg="rgba(2, 6, 23, 0.92)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50"><option value="hours">Hours</option><option value="days">Days</option><option value="weeks">Weeks</option></Box>
+          <Input id="retention-value" type="number" min="1" step="1" value={retentionValue} disabled={!admin} onChange={event => setRetentionValue(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
+          <Box as="select" id="retention-unit" value={retentionUnit} disabled={!admin} onChange={event => setRetentionUnit(event.target.value)} aria-label="Saved config retention unit" minW="32" h="10" px="3" rounded="md" bg="rgba(2, 6, 23, 0.92)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50"><option value="hours">Hours</option><option value="days">Days</option><option value="weeks">Weeks</option></Box>
         </Stack>
         <Text color="gray.500" fontSize="xs" mt="2">Choose from 1 hour to 365 days.</Text>
         <Button mt="4" bg="cyan.400" color="gray.950" loading={busy} disabled={!admin || !retentionValid} onClick={() => post("/api/config-retention", { retention_seconds: retentionSeconds }, "Saved config retention updated.")}>Save retention</Button>
@@ -117,21 +117,21 @@ export default function SettingsPage() {
         <SimpleGrid columns={{ base: 1, md: 2 }} gap="5">
           <Field.Root>
             <Field.Label color="gray.200">Device type</Field.Label>
-            <Input value={warpSettings.device_type} onChange={event => setWarpSettings({ ...warpSettings, device_type: event.target.value })} placeholder="Linux" maxLength={32} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
+            <Input value={warpSettings.device_type} disabled={!admin} onChange={event => setWarpSettings({ ...warpSettings, device_type: event.target.value })} placeholder="Linux" maxLength={32} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
             <Field.HelperText color="gray.400">Default: Linux.</Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label color="gray.200">Locale</Field.Label>
-            <Input value={warpSettings.locale} onChange={event => setWarpSettings({ ...warpSettings, locale: event.target.value })} placeholder="en_US" maxLength={20} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
+            <Input value={warpSettings.locale} disabled={!admin} onChange={event => setWarpSettings({ ...warpSettings, locale: event.target.value })} placeholder="en_US" maxLength={20} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
             <Field.HelperText color="gray.400">For example, en_US or en_GB.</Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label color="gray.200">Device name</Field.Label>
-            <Input value={warpSettings.device_name} onChange={event => setWarpSettings({ ...warpSettings, device_name: event.target.value })} placeholder="Optional" maxLength={64} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
+            <Input value={warpSettings.device_name} disabled={!admin} onChange={event => setWarpSettings({ ...warpSettings, device_name: event.target.value })} placeholder="Optional" maxLength={64} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
           </Field.Root>
           <Field.Root>
             <Field.Label color="gray.200">Device model</Field.Label>
-            <Input value={warpSettings.device_model} onChange={event => setWarpSettings({ ...warpSettings, device_model: event.target.value })} placeholder="Optional" maxLength={64} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
+            <Input value={warpSettings.device_model} disabled={!admin} onChange={event => setWarpSettings({ ...warpSettings, device_model: event.target.value })} placeholder="Optional" maxLength={64} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
           </Field.Root>
         </SimpleGrid>
         <Button mt="5" bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={busy} disabled={!admin} onClick={() => post("/api/warp-settings", { warp_settings: warpSettings }, "WARP device details saved.")}>Save device details</Button>

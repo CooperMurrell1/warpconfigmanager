@@ -66,7 +66,7 @@ Generation or validation failures leave the active config and running tunnel unt
 
 ## Sign-in and state
 
-Sign in with a Jellyfin administrator account to change the schedule, config filename, or request an update. The password is sent to Jellyfin's internal Users/AuthenticateByName API at http://jellyfin:8096 and is not stored. The Jellyfin access token is kept only in an encrypted, HTTP-only, Secure, 12-hour cookie. Logout asks Jellyfin to revoke it. CSRF and same-origin checks protect state-changing requests. HTTPS is required because the cookie is Secure.
+Sign in with a Jellyfin account. The first successful sign-in registers a dashboard account; later sign-ins continue to verify the password with Jellyfin. Passwords and Jellyfin access tokens are never stored by this app. Dashboard roles, disabled status, profile images, and active sessions live in `/data/accounts/accounts.sqlite3`. Role changes take effect locally: Viewer accounts can open only Home, Read only accounts can view the dashboard without changing settings, and Administrators can manage accounts and make changes. Logout clears the local session without calling Jellyfin. CSRF and same-origin checks protect state-changing requests. HTTPS is required because the session cookie is Secure.
 
 SQLite stores the interval, selected config filename, WARP registration identity, non-secret account metadata, update status, history, and recent logs. The API and logs never contain WireGuard private or preshared keys, the WARP+ license value, Jellyfin tokens, or full config contents.
 
@@ -76,10 +76,11 @@ Stop the manager before copying SQLite so WAL state is included. Back up securel
 
 - /opt/wireguard/wg0.conf (or the selected filename) and its .last-good copy
 - /opt/warp-manager/data/state.sqlite3
+- /opt/warp-manager/data/accounts/accounts.sqlite3
 - /opt/warp-manager/data/session_secret
 - /opt/warp-manager/data/warp_license if present
 
-To recover, restore those files and permissions, then start the existing jellyfin stack. A usable config is reused. If the session key is not restored, Jellyfin users will need to sign in again.
+To recover, restore those files and permissions, then start the existing jellyfin stack. A usable config is reused. If the session key or account database is not restored, users will need to sign in again; dashboard account roles and local profile images are stored in the account database.
 
 ## Troubleshooting
 

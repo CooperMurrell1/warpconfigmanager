@@ -14,6 +14,8 @@ ui-commands/
 *.log
 node_modules/
 .next/
+.next-validation/
+.local-data/
 .preview/
 __pycache__/
 *.py[cod]

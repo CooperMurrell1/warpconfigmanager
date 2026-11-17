@@ -21,7 +21,6 @@ function ActionIcon({ kind }) {
   const paths = {
     save: <><path d="M5 12.5 9.5 17 19 7.5" /></>,
     cancel: <><path d="m6 6 12 12M18 6 6 18" /></>,
-    key: <><circle cx="8" cy="15" r="4" /><path d="m11 12 8-8m-3 3 3 3m-6 0 3 3" /></>,
     upload: <><path d="M12 16V4m-5 5 5-5 5 5" /><path d="M5 15v5h14v-5" /></>,
     delete: <><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3" /></>,
     edit: <><path d="m4 16-.8 4.8L8 20l11-11-4-4L4 16Z" /><path d="m13.5 6.5 4 4" /></>,
@@ -30,11 +29,12 @@ function ActionIcon({ kind }) {
 }
 
 function UserPhoto({ user, version = 0, size = "12" }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [user?.Id, user?.PrimaryImageTag, version]);
+  const [failedFor, setFailedFor] = useState("");
+  const photoKey = `${user?.Id || "none"}-${user?.PrimaryImageTag || version}`;
+  const failed = failedFor === photoKey;
   const initial = (user?.Name || "?").trim().slice(0, 1).toUpperCase();
   return <Box width={size} height={size} rounded="full" overflow="hidden" flexShrink="0" display="grid" placeItems="center" bg="rgba(8,145,178,.28)" borderWidth="1px" borderColor="rgba(103,232,249,.48)" color="cyan.100" fontWeight="800">
-    {user && !failed ? <Box as="img" src={`/api/users/${encodeURIComponent(user.Id)}/avatar?v=${encodeURIComponent(user.PrimaryImageTag || version)}`} alt={`${user.Name || "User"} profile`} width="100%" height="100%" objectFit="cover" onError={() => setFailed(true)} /> : <Text>{initial}</Text>}
+    {user && !failed ? <Box as="img" key={photoKey} src={`/api/users/${encodeURIComponent(user.Id)}/avatar?v=${encodeURIComponent(user.PrimaryImageTag || version)}`} alt={`${user.Name || "User"} profile`} width="100%" height="100%" objectFit="cover" onError={() => setFailedFor(photoKey)} /> : <Text>{initial}</Text>}
   </Box>;
 }
 
@@ -52,8 +52,6 @@ export default function AccountsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(null);
-  const [newPassword, setNewPassword] = useState("");
-  const [currentPassword, setCurrentPassword] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [avatarVersion, setAvatarVersion] = useState(0);
   const avatarInput = useRef(null);
@@ -79,21 +77,19 @@ export default function AccountsPage() {
   const selected = users.find(user => user.Id === selectedId) || null;
   useEffect(() => {
     if (!selected) { setDraft(null); return; }
-    setDraft({ name: selected.Name || "", isAdministrator: selected.Policy?.IsAdministrator === true, isDisabled: selected.Policy?.IsDisabled === true });
-    setNewPassword("");
-    setCurrentPassword("");
-  }, [selected?.Id, selected?.Name, selected?.Policy?.IsAdministrator, selected?.Policy?.IsDisabled]);
+    setDraft({ name: selected.Name || "", role: selected.Role || (selected.IsAdministrator ? "admin" : "viewer"), isDisabled: selected.IsDisabled === true });
+  }, [selected?.Id, selected?.Name, selected?.Role, selected?.IsAdministrator, selected?.IsDisabled]);
 
   const filteredUsers = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
-    return users.filter(user => !needle || [user.Name, user.Id, user.Policy?.IsAdministrator ? "administrator" : "viewer", user.Policy?.IsDisabled ? "disabled" : "enabled"]
+    return users.filter(user => !needle || [user.Name, user.Id, user.Role, user.IsDisabled ? "disabled" : "enabled"]
       .some(value => String(value || "").toLocaleLowerCase().includes(needle)));
   }, [users, query]);
 
   const columns = useMemo(() => [
     { key: "Name", label: "User", sortValue: user => user.Name || "", render: user => <HStack gap="3"><UserPhoto user={user} size="9" /><Text color="gray.50" fontWeight="700">{user.Name || "Unnamed user"}</Text></HStack> },
-    { key: "Role", label: "Role", sortValue: user => user.Policy?.IsAdministrator ? 1 : 0, render: user => <Badge colorPalette={user.Policy?.IsAdministrator ? "cyan" : "gray"}>{user.Policy?.IsAdministrator ? "Admin" : "Viewer"}</Badge> },
-    { key: "Status", label: "Status", sortValue: user => user.Policy?.IsDisabled ? 0 : 1, render: user => <Text color={user.Policy?.IsDisabled ? "orange.200" : "cyan.200"}>{user.Policy?.IsDisabled ? "Disabled" : "Enabled"}</Text> },
+    { key: "Role", label: "Role", sortValue: user => user.Role || "viewer", render: user => <Badge colorPalette={user.Role === "admin" ? "cyan" : user.Role === "readonly" ? "purple" : "gray"}>{user.Role === "admin" ? "Administrator" : user.Role === "readonly" ? "Read only" : "Viewer"}</Badge> },
+    { key: "Status", label: "Status", sortValue: user => user.IsDisabled ? 0 : 1, render: user => <Text color={user.IsDisabled ? "orange.200" : "cyan.200"}>{user.IsDisabled ? "Disabled" : "Enabled"}</Text> },
     { key: "LastActivityDate", label: "Last active", sortValue: user => user.LastActivityDate || "", render: user => formatDate(user.LastActivityDate) },
   ], []);
 
@@ -110,22 +106,6 @@ export default function AccountsPage() {
       await loadUsers();
       setNotice("Account details saved.");
     } catch (reason) { setError(reason.message || "Could not save account changes"); }
-    finally { setSaving(false); }
-  }
-
-  async function savePassword() {
-    if (!selected || !newPassword) return;
-    setSaving(true); setError(""); setNotice("");
-    try {
-      const response = await fetch(`/api/users/${encodeURIComponent(selected.Id)}`, {
-        method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf() },
-        body: JSON.stringify({ action: "password", newPassword, currentPassword }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not update the password");
-      setNewPassword(""); setCurrentPassword("");
-      setNotice("Account password updated.");
-    } catch (reason) { setError(reason.message || "Could not update the password"); }
     finally { setSaving(false); }
   }
 
@@ -176,10 +156,10 @@ export default function AccountsPage() {
 
   function discardChanges() {
     if (!selected) return;
-    setDraft({ name: selected.Name || "", isAdministrator: selected.Policy?.IsAdministrator === true, isDisabled: selected.Policy?.IsDisabled === true });
+    setDraft({ name: selected.Name || "", role: selected.Role || (selected.IsAdministrator ? "admin" : "viewer"), isDisabled: selected.IsDisabled === true });
   }
 
-  const isDirty = Boolean(selected && draft && (draft.name !== (selected.Name || "") || draft.isAdministrator !== (selected.Policy?.IsAdministrator === true) || draft.isDisabled !== (selected.Policy?.IsDisabled === true)));
+  const isDirty = Boolean(selected && draft && (draft.name !== (selected.Name || "") || draft.role !== (selected.Role || (selected.IsAdministrator ? "admin" : "viewer")) || draft.isDisabled !== (selected.IsDisabled === true)));
   const isSelf = selected?.Id === state?.current_user_id;
   const buttonOutline = { variant: "outline", color: "gray.100", borderColor: "whiteAlpha.300", bg: "rgba(15,23,42,.55)", _hover: { bg: "whiteAlpha.100" } };
 
@@ -226,7 +206,7 @@ export default function AccountsPage() {
             <SimpleGrid columns={{ base: 1, sm: 2 }} gap="4">
               <Field.Root>
                 <Field.Label color="gray.200">Dashboard role</Field.Label>
-                <Box as="select" aria-label="Dashboard role" value={draft.isAdministrator ? "admin" : "viewer"} onChange={event => setDraft(value => ({ ...value, isAdministrator: event.target.value === "admin" }))} disabled={isSelf} h="10" px="3" rounded="md" bg="#0b1424" color="gray.100" borderWidth="1px" borderColor="whiteAlpha.300"><option value="viewer">Viewer</option><option value="admin">Administrator</option></Box>
+                <Box as="select" aria-label="Dashboard role" value={draft.role} onChange={event => setDraft(value => ({ ...value, role: event.target.value }))} disabled={isSelf} h="10" px="3" rounded="md" bg="#0b1424" color="gray.100" borderWidth="1px" borderColor="whiteAlpha.300"><option value="viewer">Viewer · Home only</option><option value="readonly">Read only · All pages</option><option value="admin">Administrator</option></Box>
               </Field.Root>
               <Field.Root>
                 <Field.Label color="gray.200">Account status</Field.Label>
@@ -235,13 +215,8 @@ export default function AccountsPage() {
             </SimpleGrid>
 
             <Box borderTopWidth="1px" borderColor="rgba(148, 163, 184, 0.18)" pt="4">
-              <Heading color="gray.100" size="sm" mb="4">Password</Heading>
-              {isSelf && <Field.Root mb="3"><Field.Label color="gray.300">Current password</Field.Label><Input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.3)" color="gray.50" /></Field.Root>}
-              <Field.Root>
-                <Field.Label color="gray.300">New password</Field.Label>
-                <Input type="password" autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.3)" color="gray.50" />
-              </Field.Root>
-              <IconButton icon="key" size="sm" mt="3" {...buttonOutline} loading={saving} disabled={!newPassword} onClick={savePassword}>Update password</IconButton>
+              <Heading color="gray.100" size="sm" mb="2">Sign in</Heading>
+              <Text color="gray.300" fontSize="sm">Credentials are verified by Jellyfin at sign in. This dashboard does not store or change account passwords.</Text>
             </Box>
 
             <Box borderTopWidth="1px" borderColor="rgba(148, 163, 184, 0.18)" pt="4">
@@ -251,7 +226,7 @@ export default function AccountsPage() {
                 <Box><Text color="gray.400" fontSize="xs" fontWeight="700">CREATED</Text><Text color="gray.200" mt="1" fontSize="sm">{formatDate(selected.DateCreated)}</Text></Box>
                 <Box><Text color="gray.400" fontSize="xs" fontWeight="700">LAST SIGN IN</Text><Text color="gray.200" mt="1" fontSize="sm">{formatDate(selected.LastLoginDate)}</Text></Box>
                 <Box><Text color="gray.400" fontSize="xs" fontWeight="700">LAST ACTIVE</Text><Text color="gray.200" mt="1" fontSize="sm">{formatDate(selected.LastActivityDate)}</Text></Box>
-                <Box><Text color="gray.400" fontSize="xs" fontWeight="700">PASSWORD SET</Text><Text color="gray.200" mt="1" fontSize="sm">{selected.HasPassword || selected.HasConfiguredPassword ? "Yes" : "No"}</Text></Box>
+                <Box><Text color="gray.400" fontSize="xs" fontWeight="700">DASHBOARD ROLE</Text><Text color="gray.200" mt="1" fontSize="sm">{selected.Role === "admin" ? "Administrator" : selected.Role === "readonly" ? "Read only" : "Viewer"}</Text></Box>
               </SimpleGrid>
             </Box>
 
@@ -269,7 +244,7 @@ export default function AccountsPage() {
     <Dialog.Root open={deleteOpen} onOpenChange={event => setDeleteOpen(event.open)}>
       <Portal><Dialog.Backdrop bg="blackAlpha.700" /><Dialog.Positioner><Dialog.Content bg="rgba(10,15,28,.96)" color="gray.100" borderWidth="1px" borderColor="rgba(248,113,113,.35)" rounded="2xl" backdropFilter="blur(24px)" boxShadow="0 24px 80px rgba(0,0,0,.55)">
         <Dialog.Header><Dialog.Title>Delete account?</Dialog.Title></Dialog.Header>
-        <Dialog.Body><Text color="gray.300">This permanently removes {selected?.Name || "this user"} from Jellyfin.</Text></Dialog.Body>
+        <Dialog.Body><Text color="gray.300">This removes {selected?.Name || "this user"} from this dashboard. Their Jellyfin account and password are unchanged.</Text></Dialog.Body>
         <Dialog.Footer><Button {...buttonOutline} onClick={() => setDeleteOpen(false)}>Cancel</Button><Button color="red.50" bg="red.700" _hover={{ bg: "red.600" }} loading={saving} onClick={deleteUser}><ActionIcon kind="delete" />Delete account</Button></Dialog.Footer>
       </Dialog.Content></Dialog.Positioner></Portal>
     </Dialog.Root>

@@ -65,6 +65,7 @@ getent group 1000 >/dev/null 2>&1 || fail "Group ID 1000 is required by the node
 
 ensure_directory /opt/warp-manager 755 0 0
 ensure_directory /opt/warp-manager/data 755 0 0
+ensure_directory /opt/warp-manager/data/accounts 700 1000 1000
 ensure_directory /opt/warp-manager/control 700 0 0
 ensure_directory /opt/warp-manager/control/warp-config-manager 700 0 0
 ensure_directory /opt/warp-manager/ui-commands 2770 0 1000
@@ -83,6 +84,7 @@ check_existing_file() {
 
 check_existing_file /opt/warp-manager/data/session_secret 0:1000:440
 check_existing_file /opt/warp-manager/data/state.sqlite3 0:0:600
+check_existing_file /opt/warp-manager/data/accounts/accounts.sqlite3 1000:1000:600
 check_existing_file /opt/warp-manager/data/warp_license 0:0:600
 
 [ -d /usr/local/sbin ] || fail "/usr/local/sbin does not exist; it was not created"

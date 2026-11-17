@@ -27,6 +27,16 @@ export function proxy(request) {
   if ((path === "/accounts" || path.startsWith("/accounts/")) && session.isAdmin !== true) {
     return NextResponse.redirect(new URL("/", request.url));
   }
+  if (session.role === "viewer") {
+    const viewerApi = new Set(["/api/state", "/api/auth/avatar", "/api/auth/logout"]);
+    if (path.startsWith("/api/") && !viewerApi.has(path)) {
+      return NextResponse.json({ error: "Viewer accounts can only access the home page" }, { status: 403 });
+    }
+    if (!path.startsWith("/api/") && path !== "/") return NextResponse.redirect(new URL("/", request.url));
+  }
+  if (request.method !== "GET" && path !== "/api/auth/logout" && session.role !== "admin") {
+    return NextResponse.json({ error: "An administrator account is required to make changes" }, { status: 403 });
+  }
   if (request.method !== "GET" && (!validOrigin(request) || !validCsrf(request))) {
     return NextResponse.json({ error: "Request origin or CSRF check failed" }, { status: 403 });
   }

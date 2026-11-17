@@ -143,8 +143,8 @@ export default function ConfigPage() {
     <Dialog.Root open={addOpen} onOpenChange={event => setAddOpen(event.open)}>
       <Portal><Dialog.Backdrop /><Dialog.Positioner><Dialog.Content bg="gray.900" color="gray.100" borderWidth="1px" borderColor="gray.700" rounded="2xl">
         <Dialog.Header><Dialog.Title>Add config</Dialog.Title></Dialog.Header>
-        <Dialog.Body><Text color="gray.300" mb="3">Choose a name for the new generated config.</Text><Input autoFocus maxLength={64} value={newConfigName} onChange={event => setNewConfigName(event.target.value)} bg="rgba(2,6,23,.68)" borderColor="whiteAlpha.300" /></Dialog.Body>
-        <Dialog.Footer><Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button><Button bg="cyan.400" color="gray.950" loading={busy} disabled={!newConfigName.trim()} onClick={addConfig}>Create config</Button></Dialog.Footer>
+        <Dialog.Body><Text color="gray.300" mb="3">Choose a name for the new generated config.</Text><Input autoFocus maxLength={64} value={newConfigName} disabled={!admin} onChange={event => setNewConfigName(event.target.value)} bg="rgba(2,6,23,.68)" borderColor="whiteAlpha.300" /></Dialog.Body>
+        <Dialog.Footer><Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button><Button bg="cyan.400" color="gray.950" loading={busy} disabled={!admin || !newConfigName.trim()} onClick={addConfig}>Create config</Button></Dialog.Footer>
       </Dialog.Content></Dialog.Positioner></Portal>
     </Dialog.Root>
   </>;
