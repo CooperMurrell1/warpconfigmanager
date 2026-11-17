@@ -85,7 +85,7 @@ def atomic_write(path, content, mode=0o600):
 
 def install_active_config(content, reason):
     atomic_write(ACTIVE, content, 0o600)
-    log_event("info", "Active config file changed (%s): %s" % (reason, STATE.get("config_filename", DEFAULT_CONFIG_FILENAME)))
+    log_event("info", "Active config file changed (%s): %s" % (reason, STATE.get("config_filename", DEFAULT_CONFIG_FILENAME)), "config")
 
 
 def db_connect():
@@ -102,8 +102,11 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS manager_state (id INTEGER PRIMARY KEY CHECK(id=1), state_json TEXT NOT NULL)")
         conn.execute("CREATE TABLE IF NOT EXISTS update_history (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, result TEXT NOT NULL, source TEXT NOT NULL, error TEXT, duration_seconds REAL NOT NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_update_history_finished ON update_history(id DESC)")
-        conn.execute("CREATE TABLE IF NOT EXISTS service_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS service_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'service')")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_service_logs_id ON service_logs(id DESC)")
+        service_columns = {row["name"] for row in conn.execute("PRAGMA table_info(service_logs)").fetchall()}
+        if "category" not in service_columns:
+            conn.execute("ALTER TABLE service_logs ADD COLUMN category TEXT NOT NULL DEFAULT 'service'")
         conn.execute("CREATE TABLE IF NOT EXISTS generator_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, source TEXT NOT NULL, result TEXT NOT NULL, details TEXT NOT NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_generator_logs_id ON generator_logs(id DESC)")
         conn.execute("CREATE TABLE IF NOT EXISTS saved_configs (id TEXT PRIMARY KEY, filename TEXT NOT NULL, saved_at TEXT NOT NULL, expires_at TEXT NOT NULL, sha256 TEXT UNIQUE NOT NULL, address TEXT NOT NULL, endpoint TEXT NOT NULL, account_type TEXT, account_id TEXT, device_id TEXT, account_created_at TEXT, account_expires_at TEXT, interface_public_key TEXT, dns TEXT, mtu INTEGER, allowed_ips TEXT, keepalive INTEGER)")
@@ -330,7 +333,7 @@ def load_state():
             except (ValueError, TypeError):
                 pass
         state["history"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,result,source,error,duration_seconds FROM update_history ORDER BY id DESC LIMIT 100").fetchall()][::-1]
-        state["logs"] = [dict(r) for r in conn.execute("SELECT at,level,message FROM service_logs ORDER BY id DESC LIMIT 200").fetchall()][::-1]
+        state["logs"] = [dict(r) for r in conn.execute("SELECT id,at,level,message,category FROM service_logs ORDER BY id DESC LIMIT 200").fetchall()][::-1]
         state["generator_logs"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,source,result,details FROM generator_logs ORDER BY id DESC LIMIT 100").fetchall()][::-1]
         state["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,address,endpoint,dns,mtu,allowed_ips,keepalive FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
     state["interval_seconds"] = max(MIN_INTERVAL, min(MAX_INTERVAL, int(state.get("interval_seconds", INTERVAL_DEFAULT))))
@@ -351,13 +354,16 @@ def load_state():
     return state
 
 
-def log_event(level, message):
-    entry = {"at": now(), "level": level, "message": message}
+def log_event(level, message, category="service"):
+    if category not in ("service", "config", "generator"):
+        category = "service"
+    entry = {"at": now(), "level": level, "message": message, "category": category}
     with STATE_LOCK:
         STATE["logs"].append(entry)
         STATE["logs"] = STATE["logs"][-200:]
         with db_session() as conn:
-            conn.execute("INSERT INTO service_logs(at,level,message) VALUES(?,?,?)", (entry["at"], level, message))
+            cursor = conn.execute("INSERT INTO service_logs(at,level,message,category) VALUES(?,?,?,?)", (entry["at"], level, message, category))
+            entry["id"] = cursor.lastrowid
             conn.execute("DELETE FROM service_logs WHERE id NOT IN (SELECT id FROM service_logs ORDER BY id DESC LIMIT 200)")
             conn.commit()
         save_state(STATE)
@@ -545,7 +551,7 @@ def restore_saved_config(config_id):
             STATE["generator_stage"] = "Activating saved config"
             STATE["last_error"] = None
             save_state(STATE)
-        log_event("info", "Saved config activation started: " + config_id)
+        log_event("info", "Saved config activation started: " + config_id, "config")
         with db_session() as conn:
             row = conn.execute("SELECT filename,account_type,account_id,device_id,account_created_at,account_expires_at FROM saved_configs WHERE id=?", (config_id,)).fetchone()
         if not row: raise RuntimeError("Saved config was not found")
@@ -572,17 +578,17 @@ def restore_saved_config(config_id):
                        "created_at": row["account_created_at"], "expires_at": row["account_expires_at"]}
             STATE["warp_account"] = account if any(account.values()) else None
             save_state(STATE)
-        log_event("info", "Restored and activated saved config %s" % row["filename"])
+        log_event("info", "Restored and activated saved config %s" % row["filename"], "config")
     except Exception as exc:
         rollback_reactivated = False
         if installed and previous:
             with STATE_LOCK:
                 STATE["generator_stage"] = "Activation failed; restoring the previous config"
                 save_state(STATE)
-            log_event("warning", "Saved config activation did not complete; restoring the prior config")
+            log_event("warning", "Saved config activation did not complete; restoring the prior config", "config")
             try:
                 install_active_config(previous, "rollback after saved-config activation failure")
-                log_event("warning", "Restored the previous active config after saved-config activation failed")
+                log_event("warning", "Restored the previous active config after saved-config activation failed", "config")
                 rollback_reactivated = host_request("activate-config", interface_public_key(previous)).get("config_loaded") is True
             except Exception: pass
         with STATE_LOCK:
@@ -592,7 +598,7 @@ def restore_saved_config(config_id):
             STATE["last_error"] = str(exc)[:300]
             STATE["ip"] = {"address": None, "checked_at": now(), "error": str(exc)[:250]}
             save_state(STATE)
-        log_event("error", "Saved config activation failed: %s" % str(exc)[:250])
+        log_event("error", "Saved config activation failed: %s" % str(exc)[:250], "config")
     finally:
         UPDATE_LOCK.release()
 
@@ -645,7 +651,7 @@ def _run_update_locked(source):
         STATE["last_attempt_at"] = started
         STATE["last_error"] = None
         save_state(STATE)
-    log_event("info", "%s update started" % source)
+    log_event("info", "%s update started" % source, "generator")
     def add_run_detail(message):
         timestamp = now()
         STATE.setdefault("_generator_details", []).append(timestamp + " — " + message)
@@ -696,7 +702,7 @@ def _run_update_locked(source):
         archive_config(candidate, account_info=account)
         add_run_detail("Generation completed successfully")
         add_generator_log(started, source, "success", STATE.get("_generator_details", []), completed)
-        log_event("info", "New config installed and activated; restarted %d VPN-scoped container(s)" % int(activation.get("restarted_count", 1)))
+        log_event("info", "New config installed and activated; restarted %d VPN-scoped container(s)" % int(activation.get("restarted_count", 1)), "config")
         return True
     except Exception as exc:
         if isinstance(exc, (RuntimeError, ValueError)) and str(exc):
@@ -729,7 +735,7 @@ def _run_update_locked(source):
             STATE["next_run_at"] = (dt.datetime.now(UTC) + dt.timedelta(seconds=STATE["interval_seconds"])).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         record_history({"started_at": started, "finished_at": completed, "result": "failed", "source": source,
                         "error": error, "duration_seconds": round(time.monotonic() - start_mono, 1)})
-        log_event("error", error)
+        log_event("error", error, "generator")
         add_run_detail("Generation failed: " + error[:300])
         add_generator_log(started, source, "failed", STATE.get("_generator_details", []), completed)
         return False
@@ -786,7 +792,7 @@ def process_ui_command():
                             STATE["pending_apply"] = True
                             set_active_config_filename(filename)
                             save_state(STATE)
-                        log_event("info", "Managed config filename changed to %s" % filename)
+                        log_event("info", "Managed config filename changed to %s" % filename, "config")
                         result = {"id": request_id, "ok": True, "message": "Filename saved"}
             except ValueError as exc:
                 result = {"id": request_id, "ok": False, "message": str(exc)}

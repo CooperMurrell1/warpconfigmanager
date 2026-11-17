@@ -101,10 +101,6 @@ function ShellContent({ children }) {
           <Text color="gray.50" fontWeight="800" fontSize="lg" mt="1">Config Manager</Text>
         </Box>
         <Stack gap="2">{navItems.map(item => <NavItem key={item.href} item={item} />)}</Stack>
-        <Box mt="auto" p="4" rounded="2xl" bg="rgba(15, 23, 42, 0.58)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.14)">
-          <Text color="gray.400" fontSize="xs">Connected through Jellyfin</Text>
-          <Text color="gray.100" fontWeight="700" mt="1" truncate>{state?.current_user || "Loading user"}</Text>
-        </Box>
       </Flex>
 
       <Box ml={{ base: "0", md: "260px" }} minH="100vh">

@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert, Box, Button, Heading, HStack, SimpleGrid, Stack, Text } from "@chakra-ui/react";
+import { Alert, Box, Button, Heading, SimpleGrid, Stack, Text } from "@chakra-ui/react";
 import { useEffect, useState } from "react";
 import { useDashboard, when } from "@/components/dashboard-context";
 import { Detail, GlassCard, PageHeader, StatusBadge } from "@/components/dashboard-ui";
@@ -64,8 +64,8 @@ export default function ConfigPage() {
     <PageHeader eyebrow="WireGuard" title="Configuration" description="Inspect the active tunnel profile or choose a saved version. Select a row to view its details; use Activate to switch the running tunnel." />
     {state?.status === "running" && state?.generator_stage && <GlassCard p="4" mb="5"><Text color="cyan.200" fontSize="sm">{state.generator_stage}</Text></GlassCard>}
 
-    <SimpleGrid columns={{ base: 1, xl: 2 }} alignItems="start" gap="5">
-      <Stack gap="5">
+    <SimpleGrid columns={{ base: 1, "2xl": 12 }} alignItems="start" gap="5">
+      <Stack gap="5" minW="0" gridColumn={{ "2xl": "span 4" }}>
         <SimpleGrid columns={{ base: 1, md: 2 }} gap="4">
           <GlassCard p="5"><Detail label="Viewing file">{selectedSaved?.filename || state?.config_filename || "wg0.conf"}{selectedActive && <Text as="span" color="cyan.200" ml="2">Active</Text>}</Detail></GlassCard>
           <GlassCard p="5"><Text color="gray.400" fontSize="xs" fontWeight="700" letterSpacing="0.08em">SERVICE STATUS</Text><Box mt="2"><StatusBadge status={state?.status} /></Box><Text color="gray.500" fontSize="xs" mt="2">Last successful update {when(state?.last_success_at)}</Text></GlassCard>
@@ -73,7 +73,7 @@ export default function ConfigPage() {
 
         <GlassCard p={{ base: "5", md: "6" }}>
           <Heading color="gray.50" size="md" mb="5">Interface and peer</Heading>
-          {config ? <SimpleGrid columns={{ base: 1, md: 2 }} gap="5">
+          {config ? <SimpleGrid columns={{ base: 1, lg: 2 }} gap="5" minW="0">
             <Detail label="Interface address">{config.address || "Not available"}</Detail>
             <Detail label="DNS">{config.dns || "Not specified"}</Detail>
             <Detail label="MTU">{config.mtu || "Default"}</Detail>
@@ -86,7 +86,7 @@ export default function ConfigPage() {
 
         <GlassCard p={{ base: "5", md: "6" }}>
           <Heading color="gray.50" size="md" mb="5">WARP service and account</Heading>
-          <SimpleGrid columns={{ base: 1, md: 2 }} gap="5">
+          <SimpleGrid columns={{ base: 1, lg: 2 }} gap="5" minW="0">
             <Detail label="Provider">{state?.warp_service?.provider || "Cloudflare WARP"}</Detail>
             <Detail label="Generator">{state?.warp_service?.generator || "wireguard-warp-generator"}</Detail>
             <Detail label="Generator version">{state?.warp_service?.generator_commit || "Not available"}</Detail>
@@ -117,7 +117,7 @@ export default function ConfigPage() {
         </Alert.Root>
       </Stack>
 
-      <Stack gap="4" id="saved-configs">
+      <Stack gap="4" id="saved-configs" minW="0" gridColumn={{ "2xl": "span 8" }}>
         <Box><Heading color="gray.50" size="lg">Saved configs</Heading><Text color="gray.400" fontSize="sm" mt="2">Choose a row to inspect it. Activate, download, or delete it with the existing table actions.</Text></Box>
         <SavedConfigsTable selectedId={selectedSaved?.id || null} onSelect={setSelectedId} />
       </Stack>
