@@ -60,10 +60,10 @@ command -v systemctl >/dev/null 2>&1 || fail "systemd is required"
 docker inspect qbittorrentvpn >/dev/null 2>&1 || fail "Existing qbittorrentvpn container was not found"
 getent group 1000 >/dev/null 2>&1 || fail "Group ID 1000 is required by the node process"
 
-ensure_directory /opt/warp-manager 0755 0 0
-ensure_directory /opt/warp-manager/data 0755 0 0
-ensure_directory /opt/warp-manager/control 0700 0 0
-ensure_directory /opt/warp-manager/control/warp-config-manager 0700 0 0
+ensure_directory /opt/warp-manager 755 0 0
+ensure_directory /opt/warp-manager/data 755 0 0
+ensure_directory /opt/warp-manager/control 700 0 0
+ensure_directory /opt/warp-manager/control/warp-config-manager 700 0 0
 ensure_directory /opt/warp-manager/ui-commands 2770 0 1000
 ensure_directory /opt/warp-manager/ui-commands/warp-config-manager 2770 0 1000
 
@@ -103,3 +103,4 @@ fi
 systemctl daemon-reload
 systemctl enable --now warp-vpn-manager.path
 echo "Host VPN manager setup complete. Existing files were not overwritten or deleted."
+
