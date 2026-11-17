@@ -56,12 +56,12 @@ export default function SettingsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Preferences" title="Settings" description="Choose when your config refreshes and how this device appears in WARP." />
+      <PageHeader eyebrow="Preferences" title="Settings" description="Schedule, retention, and device identity." />
 
       <SimpleGrid columns={{ base: 1, xl: 2 }} gap="5">
         <GlassCard p={{ base: "5", md: "7" }}>
           <Heading color="gray.50" size="md" mb="2">Update schedule</Heading>
-          <Text color="gray.400" fontSize="sm" mb="6">Choose how often to create and apply a fresh configuration.</Text>
+          <Text color="gray.400" fontSize="sm" mb="6">Set the refresh cadence.</Text>
           <Stack gap="4">
             <Field.Root invalid={!intervalValid}>
               <Field.Label color="gray.200">Refresh every</Field.Label>
@@ -113,7 +113,7 @@ export default function SettingsPage() {
 
       <GlassCard id="warp-settings-form" p={{ base: "5", md: "7" }} mt="5">
         <Heading color="gray.50" size="md" mb="2">WARP device details</Heading>
-        <Text color="gray.400" fontSize="sm" mb="6">Choose the name and details shown for this device when it registers with WARP. Changes apply the next time a config is generated.</Text>
+        <Text color="gray.400" fontSize="sm" mb="6">Device identity used at registration.</Text>
         <SimpleGrid columns={{ base: 1, md: 2 }} gap="5">
           <Field.Root>
             <Field.Label color="gray.200">Device type</Field.Label>

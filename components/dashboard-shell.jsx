@@ -13,6 +13,16 @@ const navItems = [
   { href: "/settings", label: "Settings", mark: "S" },
 ];
 
+function NavGlyph({ name }) {
+  const paths = {
+    Home: <><path d="m3 10 9-7 9 7" /><path d="M5 9v11h14V9M9 20v-6h6v6" /></>,
+    Config: <><path d="M4 5h16M4 12h16M4 19h16" /><circle cx="9" cy="5" r="2" fill="currentColor" /><circle cx="15" cy="12" r="2" fill="currentColor" /><circle cx="8" cy="19" r="2" fill="currentColor" /></>,
+    Logs: <><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" /></>,
+    Settings: <><circle cx="12" cy="12" r="3" /><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.6a8 8 0 0 1-1.6.9l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.6-.9l-1.7.6-1.4-2.4 1.4-1.1a7 7 0 0 1 0-1.9l-1.4-1.1 1.4-2.4 1.7.6a8 8 0 0 1 1.6-.9l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.6.9l1.7-.6 1.4 2.4-1.4 1.1a7 7 0 0 1 0 1.8Z" transform="translate(-1 -1) scale(.95)" /></>,
+  };
+  return <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+}
+
 function NavItem({ item, compact = false }) {
   const pathname = usePathname();
   const active = pathname === item.href;
@@ -30,7 +40,7 @@ function NavItem({ item, compact = false }) {
     >
       <Link href={item.href}>
         <HStack px={compact ? "3" : "4"} py="3" justify={compact ? "center" : "start"} gap="3">
-          <Box width="7" height="7" rounded="lg" bg={active ? "cyan.400" : "rgba(148, 163, 184, 0.14)"} color={active ? "gray.950" : "gray.200"} display="grid" placeItems="center" fontSize="xs" fontWeight="900">{item.mark}</Box>
+          <Box width="7" height="7" rounded="lg" bg={active ? "cyan.400" : "rgba(148, 163, 184, 0.14)"} color={active ? "gray.950" : "gray.200"} display="grid" placeItems="center"><NavGlyph name={item.label} /></Box>
           <Text fontWeight="700" fontSize="sm">{item.label}</Text>
         </HStack>
       </Link>
@@ -96,10 +106,10 @@ function ShellContent({ children }) {
         backdropFilter="blur(24px)"
         p="5"
       >
-        <Box px="2" py="3" mb="7">
-          <Text color="cyan.300" fontWeight="900" fontSize="xs" letterSpacing="0.18em">WARP TUNNEL</Text>
-          <Text color="gray.50" fontWeight="800" fontSize="lg" mt="1">Config Manager</Text>
-        </Box>
+        <HStack px="2" py="3" mb="7" gap="3">
+          <Box as="img" src="/jellyfin-icon.svg" alt="Jellyfin" width="10" height="10" />
+          <Box><Text color="cyan.300" fontWeight="900" fontSize="xs" letterSpacing="0.18em">WARP TUNNEL</Text><Text color="gray.50" fontWeight="800" fontSize="lg" mt="1">Config Manager</Text></Box>
+        </HStack>
         <Stack gap="2">{navItems.map(item => <NavItem key={item.href} item={item} />)}</Stack>
       </Flex>
 

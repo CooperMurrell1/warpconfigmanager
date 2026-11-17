@@ -15,7 +15,7 @@ export default function HomePage() {
       <PageHeader
         eyebrow="Overview"
         title={`Welcome${state?.current_user ? `, ${state.current_user}` : ""}`}
-        description="See the tunnel at a glance and monitor your Cloudflare WARP configuration."
+        description=""
       />
 
       <SimpleGrid columns={{ base: 1, lg: 3 }} gap="5" mb="5">

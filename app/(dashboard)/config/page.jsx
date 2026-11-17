@@ -18,6 +18,10 @@ export default function ConfigPage() {
   const activeSaved = state?.saved_configs?.find(item => item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key) || null;
   const selectedSaved = state?.saved_configs?.find(item => item.id === selectedId) || activeSaved;
   const selectedActive = !selectedSaved || Boolean(selectedSaved.interface_public_key && selectedSaved.interface_public_key === state?.config?.interface_public_key);
+  const selectedStatus = selectedActive ? state?.status : selectedSaved?.last_status || "success";
+  const selectedStatusAt = selectedActive
+    ? selectedStatus === "success" ? state?.last_success_at : state?.last_attempt_at || state?.last_success_at
+    : selectedSaved?.status_at || selectedSaved?.saved_at;
   const config = selectedSaved ? {
     address: selectedSaved.address,
     dns: selectedSaved.dns,
@@ -74,14 +78,14 @@ export default function ConfigPage() {
   }
 
   return <>
-    <PageHeader eyebrow="WireGuard" title="Configuration" description="Inspect the active tunnel profile or choose a saved version. Select a name to view its details." action={<Button bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} disabled={state?.status === "running" || !admin} onClick={() => { setNewConfigName(nextConfigName()); setAddOpen(true); }}>Add config</Button>} />
+    <PageHeader eyebrow="WireGuard" title="Configuration" description="Select or add a config." action={<Button bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} disabled={state?.status === "running" || !admin} onClick={() => { setNewConfigName(nextConfigName()); setAddOpen(true); }}>Add config</Button>} />
     {state?.status === "running" && state?.generator_stage && <GlassCard p="4" mb="5"><Text color="cyan.200" fontSize="sm">{state.generator_stage}</Text></GlassCard>}
 
     <SimpleGrid columns={{ base: 1, "2xl": 12 }} alignItems="start" gap="5">
       <Stack gap="5" minW="0" gridColumn={{ "2xl": "span 8" }}>
         <SimpleGrid columns={{ base: 1, md: 2 }} gap="4">
           <GlassCard p="5"><Detail label="Viewing config">{selectedSaved?.name || "Active config"}{selectedActive && <Text as="span" color="cyan.200" ml="2">Active</Text>}</Detail></GlassCard>
-          <GlassCard p="5"><Text color="gray.400" fontSize="xs" fontWeight="700" letterSpacing="0.08em">SERVICE STATUS</Text><Box mt="2"><StatusBadge status={state?.status} /></Box><Text color="gray.500" fontSize="xs" mt="2">Last successful update {when(state?.last_success_at)}</Text></GlassCard>
+          <GlassCard p="5"><Text color="gray.400" fontSize="xs" fontWeight="700" letterSpacing="0.08em">CONFIG STATUS</Text><Box mt="2"><StatusBadge status={selectedStatus} /></Box><Text color="gray.400" fontSize="xs" mt="2">Last status update · {when(selectedStatusAt)}</Text></GlassCard>
         </SimpleGrid>
         {selectedSaved && <SavedConfigActions config={selectedSaved} onDeleted={() => setSelectedId(null)} />}
 
@@ -111,7 +115,7 @@ export default function ConfigPage() {
             <Detail label="Account expiry / TTL">{account?.expires_at ? when(account.expires_at) : "Not available"}</Detail>
             <Detail label="Registration endpoint">{state?.warp_service?.registration_endpoint || "Not available"}</Detail>
           </SimpleGrid>
-          <Text color="gray.500" fontSize="xs" mt="5">Account details are shown for the selected profile. License values, API tokens, private keys, and full configs are not shown here.</Text>
+          <Text color="gray.500" fontSize="xs" mt="5">Sensitive credentials are hidden.</Text>
         </GlassCard>
 
         <GlassCard p={{ base: "5", md: "6" }}>

@@ -5,11 +5,11 @@ import { Badge, Box, Heading, Text } from "@chakra-ui/react";
 export function GlassCard({ children, ...props }) {
   return (
     <Box
-      bg="rgba(15, 23, 42, 0.68)"
+      bg="linear-gradient(145deg, rgba(15, 23, 42, 0.82), rgba(7, 11, 20, 0.76))"
       borderWidth="1px"
-      borderColor="rgba(148, 163, 184, 0.18)"
-      boxShadow="0 18px 48px rgba(0, 0, 0, 0.24)"
-      backdropFilter="blur(18px)"
+      borderColor="rgba(148, 163, 184, 0.22)"
+      boxShadow="0 20px 55px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,.035)"
+      backdropFilter="blur(24px) saturate(135%)"
       rounded="2xl"
       color="gray.100"
       {...props}

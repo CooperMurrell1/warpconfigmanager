@@ -52,7 +52,7 @@ export default function LogsPage() {
   const visibleEntries = entries.slice((page - 1) * pageSize, page * pageSize);
 
   return <>
-    <PageHeader eyebrow="Diagnostics" title="Logs" description="Browse generator runs, config changes, and service events. Expand or download any entry." />
+    <PageHeader eyebrow="Diagnostics" title="Logs" description="Generation and service events." />
     <GlassCard p={{ base: "4", md: "5" }} mb="4">
       <SimpleGrid columns={{ base: 1, sm: 2, xl: 4 }} gap="3">
         <Box as="select" aria-label="Filter logs by type" value={typeFilter} onChange={event => setTypeFilter(event.target.value)} h="10" px="3" rounded="lg" bg="#0b1424" color="gray.100" borderWidth="1px" borderColor="whiteAlpha.300">
