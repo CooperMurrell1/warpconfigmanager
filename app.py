@@ -176,20 +176,18 @@ def validate_config(text):
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5, check=False)
     if check.returncode != 0 or not check.stdout.strip():
         raise ValueError("Private key is invalid")
-    fd, name = tempfile.mkstemp(prefix="warp-candidate-", suffix=".conf", dir="/tmp")
-    try:
-        os.fchmod(fd, 0o600)
+    # wg-quick derives the interface name from the config basename and rejects
+    # names longer than Linux's 15-character interface limit. Keep the random
+    # component in the parent directory and give the config a valid basename.
+    with tempfile.TemporaryDirectory(prefix="warp-validate-", dir="/tmp") as directory:
+        name = pathlib.Path(directory) / "wg0.conf"
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        result = subprocess.run(["wg-quick", "strip", name], stdout=subprocess.DEVNULL,
+        result = subprocess.run(["wg-quick", "strip", str(name)], stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, timeout=10, check=False)
         if result.returncode != 0:
             raise ValueError("WireGuard parser rejected the candidate")
-    finally:
-        try:
-            os.unlink(name)
-        except FileNotFoundError:
-            pass
     return details
 
 
@@ -378,7 +376,10 @@ def run_update(source, lock_acquired=False):
         log_event("warning", "New config installed atomically; automatic VPN activation is disabled and the config is pending manual activation")
         return True
     except Exception as exc:
-        error = str(exc) if isinstance(exc, RuntimeError) else "Candidate validation or installation failed (%s)" % type(exc).__name__
+        if isinstance(exc, (RuntimeError, ValueError)) and str(exc):
+            error = str(exc)
+        else:
+            error = "Candidate validation or installation failed (%s)" % type(exc).__name__
         try:
             if installed:
                 if previous is None:
@@ -545,5 +546,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
