@@ -52,14 +52,9 @@ def validate_config_filename(value):
     return value
 
 
-def unique_saved_config_name(conn, prefix="Untitled Config", numbered=False):
+def unique_saved_config_name(conn, prefix="Untitled Config"):
     names = {row["name"].casefold() for row in conn.execute("SELECT name FROM saved_configs").fetchall()}
     base = prefix
-    if numbered:
-        suffix = 1
-        while (candidate := "%s (%d)" % (base, suffix)).casefold() in names:
-            suffix += 1
-        return candidate
     if base.casefold() not in names:
         return base
     suffix = 2
@@ -567,7 +562,15 @@ def archive_config(text, filename=None, account_info=None, display_name=None, au
                 return
             config_id = secrets.token_hex(16)
             atomic_write(ARCHIVE_DIR / (config_id + ".conf"), text, 0o600)
-            archive_name = validate_saved_config_name(display_name) if display_name else unique_saved_config_name(conn, "Auto", True) if automatic else unique_saved_config_name(conn)
+            if display_name:
+                archive_name = validate_saved_config_name(display_name)
+            elif automatic:
+                account_id = str(account.get("account_id") or "")
+                account_guid_part = re.sub(r"[^A-Za-z0-9]", "", account_id.split("-", 1)[0])[:12]
+                auto_prefix = "Auto (%s)" % account_guid_part if account_guid_part else "Auto"
+                archive_name = unique_saved_config_name(conn, auto_prefix)
+            else:
+                archive_name = unique_saved_config_name(conn)
             if conn.execute("SELECT 1 FROM saved_configs WHERE name=? COLLATE NOCASE", (archive_name,)).fetchone():
                 raise ValueError("A saved config already uses the name %s" % archive_name)
             conn.execute("INSERT INTO saved_configs(id,filename,name,saved_at,expires_at,sha256,address,endpoint,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,dns,mtu,allowed_ips,keepalive) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

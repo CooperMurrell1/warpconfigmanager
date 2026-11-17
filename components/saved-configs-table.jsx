@@ -30,8 +30,8 @@ export function SavedConfigsTable({ selectedId, onSelect }) {
   return <GlassCard p="3"><Stack gap="2">
     {configs.length ? configs.map(item => {
       const active = item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key;
-      return <Box key={item.id} p="3" rounded="xl" borderWidth="1px" borderColor={selectedId === item.id ? "cyan.300" : "whiteAlpha.200"} bg={selectedId === item.id || active ? "rgba(8,145,178,.16)" : "rgba(15,23,42,.4)"}>
-        <HStack justify="space-between" gap="2"><Button variant="ghost" p="0" height="auto" minW="0" whiteSpace="normal" color="gray.100" fontWeight="700" textAlign="left" onClick={() => onSelect(item.id)}>{item.name || "Untitled Config"}</Button>{active && <Badge colorPalette="cyan">Active</Badge>}</HStack>
+      return <Box key={item.id} role="button" tabIndex={0} aria-pressed={selectedId === item.id} cursor="pointer" onClick={() => onSelect(item.id)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(item.id); } }} p="3" rounded="xl" borderWidth="1px" borderColor={selectedId === item.id ? "cyan.300" : "whiteAlpha.200"} bg={selectedId === item.id || active ? "rgba(8,145,178,.16)" : "rgba(15,23,42,.4)"} _hover={{ bg: "rgba(8,145,178,.24)", borderColor: "cyan.400" }} _focusVisible={{ outline: "2px solid", outlineColor: "cyan.300" }}>
+        <HStack justify="space-between" gap="2"><Text minW="0" whiteSpace="normal" color="gray.100" fontWeight="700">{item.name || "Untitled Config"}</Text>{active && <Badge colorPalette="cyan">Active</Badge>}</HStack>
         <Text color="gray.400" fontSize="xs" mt="1">{when(item.saved_at)}</Text>
       </Box>;
     }) : <Text color="gray.400" p="2">No saved configs yet.</Text>}
