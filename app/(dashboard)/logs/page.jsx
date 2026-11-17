@@ -18,6 +18,8 @@ export default function LogsPage() {
   const [resultFilter, setResultFilter] = useState("all");
   const [sortOrder, setSortOrder] = useState("newest");
   const [search, setSearch] = useState("");
+  const [pageSize, setPageSize] = useState(20);
+  const [page, setPage] = useState(1);
 
   const entries = useMemo(() => {
     const generator = (state?.generator_logs || []).map(item => {
@@ -46,6 +48,8 @@ export default function LogsPage() {
         return sortOrder === "oldest" ? diff : -diff;
       });
   }, [state?.generator_logs, state?.logs, typeFilter, resultFilter, sortOrder, search]);
+  const pageCount = Math.max(1, Math.ceil(entries.length / pageSize));
+  const visibleEntries = entries.slice((page - 1) * pageSize, page * pageSize);
 
   return <>
     <PageHeader eyebrow="Diagnostics" title="Logs" description="Browse generator runs, config changes, and service events. Expand or download any entry." />
@@ -60,12 +64,13 @@ export default function LogsPage() {
         <Box as="select" aria-label="Sort logs by date" value={sortOrder} onChange={event => setSortOrder(event.target.value)} h="10" px="3" rounded="lg" bg="#0b1424" color="gray.100" borderWidth="1px" borderColor="whiteAlpha.300">
           <option value="newest">Newest first</option><option value="oldest">Oldest first</option>
         </Box>
-        <Input aria-label="Search logs" placeholder="Search log messages" value={search} onChange={event => setSearch(event.target.value)} bg="rgba(2,6,23,.68)" borderColor="whiteAlpha.300" color="gray.100" _placeholder={{ color: "gray.500" }} />
+        <Input aria-label="Search logs" placeholder="Search log messages" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} bg="rgba(2,6,23,.68)" borderColor="whiteAlpha.300" color="gray.100" _placeholder={{ color: "gray.500" }} />
+        <Box as="select" aria-label="Logs per page" value={pageSize} onChange={event => { setPageSize(Number(event.target.value)); setPage(1); }} h="10" px="3" rounded="lg" bg="#0b1424" color="gray.100" borderWidth="1px" borderColor="whiteAlpha.300"><option value="10">10 per page</option><option value="20">20 per page</option><option value="50">50 per page</option><option value="100">100 per page</option></Box>
       </SimpleGrid>
     </GlassCard>
 
     <Stack gap="3">
-      {entries.length ? entries.map((entry, index) => {
+      {visibleEntries.length ? visibleEntries.map((entry, index) => {
         const resultColor = entry.result === "success" || entry.result === "info" ? "green" : entry.result === "running" ? "cyan" : entry.result === "warning" ? "orange" : "red";
         return <GlassCard key={`${entry.type}-${entry.at}-${index}`} p="0" overflow="hidden">
           <Box as="details" p={{ base: "4", md: "5" }}>
@@ -91,5 +96,6 @@ export default function LogsPage() {
         </GlassCard>;
       }) : <GlassCard p="6"><Heading color="gray.100" size="md">No matching logs</Heading><Text color="gray.400" mt="2">Change the filters or wait for another event to be recorded.</Text></GlassCard>}
     </Stack>
+    {entries.length > 0 && <Flex mt="5" align="center" justify="space-between" gap="3" wrap="wrap"><Text color="gray.400" fontSize="sm">Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, entries.length)} of {entries.length}</Text><HStack><Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</Button><Text color="gray.300" fontSize="sm">Page {page} of {pageCount}</Text><Button size="sm" variant="outline" disabled={page >= pageCount} onClick={() => setPage(value => Math.min(pageCount, value + 1))}>Next</Button></HStack></Flex>}
   </>;
 }

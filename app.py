@@ -85,7 +85,27 @@ def atomic_write(path, content, mode=0o600):
 
 def install_active_config(content, reason):
     atomic_write(ACTIVE, content, 0o600)
-    log_event("info", "Active config file changed (%s): %s" % (reason, STATE.get("config_filename", DEFAULT_CONFIG_FILENAME)), "config")
+    parsed = parse_config(content)
+    account = STATE.get("warp_account") or {}
+    details = [
+        "Change reason: %s" % reason,
+        "Managed filename: %s" % STATE.get("config_filename", DEFAULT_CONFIG_FILENAME),
+        "Config SHA-256: %s" % __import__("hashlib").sha256(content.encode("utf-8")).hexdigest(),
+        "Interface address: %s" % (parsed.get("address") or "unavailable"),
+        "DNS: %s" % (parsed.get("dns") or "not specified"),
+        "MTU: %s" % (parsed.get("mtu") or "default"),
+        "Allowed IPs: %s" % (parsed.get("allowed_ips") or "unavailable"),
+        "Endpoint: %s" % (parsed.get("endpoint") or "unavailable"),
+        "Persistent keepalive: %s" % (parsed.get("keepalive") or "disabled"),
+        "Interface public key: %s" % (interface_public_key(content) or "unavailable"),
+        "WARP account type: %s" % (account.get("account_type") or "unavailable"),
+        "WARP account ID: %s" % (account.get("account_id") or "unavailable"),
+        "WARP device ID: %s" % (account.get("device_id") or "unavailable"),
+        "WARP account created: %s" % (account.get("created_at") or "unavailable"),
+        "WARP account expires: %s" % (account.get("expires_at") or "unavailable"),
+        "Sensitive values omitted: private key, registration token, and license data.",
+    ]
+    log_event("info", "Active config changed: %s\n%s" % (STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), "\n".join(details)), "config")
 
 
 def db_connect():
