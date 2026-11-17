@@ -29,7 +29,6 @@ ACTIVE = CONFIG_DIR / DEFAULT_CONFIG_FILENAME
 BACKUP = ACTIVE.with_name(ACTIVE.name + ".last-good")
 GENERATOR = "/usr/local/bin/warp-register.sh"
 INTERVAL_DEFAULT = 86400
-STARTUP_FRESHNESS_SECONDS = 24 * 60 * 60
 GENERATOR_COMMIT = "d4616f154d654d5c159c193432159240c96614bb"
 WARP_API_ENDPOINT = "https://api.cloudflareclient.com/v0a737/reg"
 DEFAULT_WARP_SETTINGS = {"device_type": "Linux", "locale": "en_US", "device_name": "", "device_model": ""}
@@ -644,28 +643,37 @@ def main():
         save_state(STATE)
     active, _ = active_config()
     if active:
-        try:
-            config_modified = ACTIVE.stat().st_mtime
-            config_age = max(0, time.time() - config_modified)
-        except OSError:
-            config_age = STARTUP_FRESHNESS_SECONDS
-            config_modified = time.time() - config_age
-        if config_age < STARTUP_FRESHNESS_SECONDS:
-            fresh_due = dt.datetime.fromtimestamp(config_modified + STARTUP_FRESHNESS_SECONDS, UTC).replace(microsecond=0)
-            current_due = None
+        last_generated = None
+        last_success = STATE.get("last_success_at")
+        if isinstance(last_success, str):
             try:
-                if STATE.get("next_run_at"):
-                    current_due = dt.datetime.fromisoformat(STATE["next_run_at"].replace("Z", "+00:00"))
+                last_generated = dt.datetime.fromisoformat(last_success.replace("Z", "+00:00"))
+                if last_generated.tzinfo is None:
+                    last_generated = last_generated.replace(tzinfo=UTC)
+                last_generated = last_generated.astimezone(UTC)
             except ValueError:
-                pass
-            if current_due is None or current_due.timestamp() < fresh_due.timestamp():
-                with STATE_LOCK:
-                    STATE["next_run_at"] = fresh_due.isoformat().replace("+00:00", "Z")
-                    save_state(STATE)
-            log_event("info", "Usable config is less than 24 hours old; startup generation skipped")
-        else:
-            log_event("info", "Usable config is at least 24 hours old; startup generation queued")
+                last_generated = None
+        try:
+            config_modified = dt.datetime.fromtimestamp(ACTIVE.stat().st_mtime, UTC)
+            if last_generated is None or config_modified > last_generated:
+                last_generated = config_modified
+        except OSError:
+            pass
+        if last_generated is None:
+            log_event("warning", "Could not determine when the active config was last generated; startup generation queued")
             threading.Thread(target=run_update, args=("startup",), daemon=True).start()
+        else:
+            interval = int(STATE.get("interval_seconds", INTERVAL_DEFAULT))
+            next_due = (last_generated + dt.timedelta(seconds=interval)).replace(microsecond=0)
+            with STATE_LOCK:
+                STATE["next_run_at"] = next_due.isoformat().replace("+00:00", "Z")
+                save_state(STATE)
+            if next_due.timestamp() > time.time():
+                remaining = int(next_due.timestamp() - time.time())
+                log_event("info", "Active config is within its %d-second update interval; startup generation skipped (%d seconds remain)" % (interval, remaining))
+            else:
+                log_event("info", "Active config is outside its %d-second update interval; startup generation queued" % interval)
+                threading.Thread(target=run_update, args=("startup",), daemon=True).start()
     else:
         log_event("warning", "No usable active config found; startup generation queued")
         threading.Thread(target=run_update, args=("startup",), daemon=True).start()
