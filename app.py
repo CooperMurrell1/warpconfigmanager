@@ -769,7 +769,7 @@ def host_request(action, expected_public_key=None):
                             "Discovery matches containers sharing the VPN container network namespace.",
                             "Host journal: journalctl -u warp-vpn-manager.service",
                         ]
-                        log_event("info" if result.get("ok") and not dependent_failed else "warning", summary, "config", diagnostic_details)
+                        log_event("info" if result.get("ok") and not dependent_failed and int(result.get("dependent_count", 0)) > 0 else "warning", summary, "config", diagnostic_details)
                         details = STATE.get("_generator_details")
                         if isinstance(details, list):
                             timestamp = now()

@@ -86,6 +86,9 @@ if [ "$running" != true ]; then
   message=vpn-container-not-running
 elif [ "$ACTION" = activate-config ]; then
   vpn_id=$(docker inspect --format '{{.Id}}' qbittorrentvpn 2>/dev/null || true)
+  vpn_pid=$(docker inspect --format '{{.State.Pid}}' qbittorrentvpn 2>/dev/null || true)
+  vpn_netns=""
+  case "$vpn_pid" in ''|0|*[!0-9]*) ;; *) vpn_netns=$(readlink "/proc/$vpn_pid/ns/net" 2>/dev/null || true) ;; esac
   if [ -z "$vpn_id" ]; then
     ok=false
     message=vpn-container-metadata-unavailable
@@ -96,23 +99,32 @@ elif [ "$ACTION" = activate-config ]; then
       [ "$container" != "$vpn_id" ] || continue
       network_mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$container" 2>/dev/null || true)
       container_name=$(docker inspect --format '{{.Name}}' "$container" 2>/dev/null || true)
-      log "examining container name=${container_name#/} id=$container network_mode=${network_mode:-unavailable}"
+      container_pid=$(docker inspect --format '{{.State.Pid}}' "$container" 2>/dev/null || true)
+      container_netns=""
+      case "$container_pid" in ''|0|*[!0-9]*) ;; *) container_netns=$(readlink "/proc/$container_pid/ns/net" 2>/dev/null || true) ;; esac
+      log "examining container name=${container_name#/} id=$container network_mode=${network_mode:-unavailable} pid=${container_pid:-unavailable} netns=${container_netns:-unavailable}"
+      matched=false
       case "$network_mode" in
         container:*)
           namespace_ref=${network_mode#container:}
           namespace_id=$(docker inspect --format '{{.Id}}' "$namespace_ref" 2>/dev/null || true)
           log "container=${container_name#/} id=$container network_mode=$network_mode namespace_id=${namespace_id:-unresolved}"
-          if [ "$namespace_id" = "$vpn_id" ]; then
-            dependents="$dependents $container"
-            dependent_count=$((dependent_count + 1))
-            if [ -n "$dependent_ids" ]; then dependent_ids="$dependent_ids,$container"; else dependent_ids="$container"; fi
-            log "matched routed dependent name=${container_name#/} id=$container running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)"
-          else
-            log "container name=${container_name#/} id=$container uses a different or unresolved network namespace"
-          fi
+          if [ "$namespace_id" = "$vpn_id" ] || [ "$namespace_ref" = "$vpn_id" ] || [ "$namespace_ref" = "qbittorrentvpn" ] || [ "$namespace_ref" = "/qbittorrentvpn" ]; then matched=true; fi
           ;;
         *) log "container name=${container_name#/} id=$container does not share a container network namespace" ;;
       esac
+      if [ -n "$vpn_netns" ] && [ "$container_netns" = "$vpn_netns" ]; then
+        matched=true
+        log "container name=${container_name#/} id=$container matched by shared Linux network namespace $vpn_netns"
+      fi
+      if [ "$matched" = true ]; then
+        dependents="$dependents $container"
+        dependent_count=$((dependent_count + 1))
+        if [ -n "$dependent_ids" ]; then dependent_ids="$dependent_ids,$container"; else dependent_ids="$container"; fi
+        log "matched routed dependent name=${container_name#/} id=$container running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)"
+      else
+        log "container name=${container_name#/} id=$container was not matched to qBittorrentVPN"
+      fi
     done
     log "namespace discovery complete; matched=$dependent_count ids=${dependent_ids:-none}"
 
@@ -130,8 +142,8 @@ elif [ "$ACTION" = activate-config ]; then
         message=vpn-container-not-ready
       else
         if [ "$dependent_count" -eq 0 ]; then
-          ok=false
           message=no-routed-containers-found
+          log "warning: no dependent containers matched; continuing config activation and WireGuard key verification"
         fi
         restart_pids=""
         for container in $dependents; do
@@ -155,8 +167,8 @@ elif [ "$ACTION" = activate-config ]; then
           fi
         done
         if [ "$restart_failed" = true ]; then
-          ok=false
           message=dependent-container-restart-failed
+          log "warning: one or more dependent restarts failed; continuing WireGuard key verification"
         fi
         log "dependent restart batch complete; matched=$dependent_count restarted_total=$restarted_count failed_count=$dependent_failed_count"
       fi
@@ -175,7 +187,7 @@ elif [ "$ACTION" = activate-config ]; then
     done
     if [ "$loaded" = true ]; then
       config_loaded=true
-      message=config-activated
+      if [ "$dependent_count" -gt 0 ] && [ "$dependent_failed_count" -eq 0 ]; then message=config-activated; fi
       log "config activation verified"
       probe_ip || true
     else
