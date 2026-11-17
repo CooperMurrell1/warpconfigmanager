@@ -218,12 +218,17 @@ def validate_config(text):
 def config_at(path):
     try:
         st = path.lstat()
-        # Bind-mounted configs may be owned by the VPN container's PUID. The
-        # owner does not need to be root as long as group/other cannot read secrets.
-        if path.is_symlink() or not path.is_file() or st.st_size > 32768 or st.st_mode & 0o077:
+        # Bind-mounted configs may be owned by the VPN container's PUID. Reject
+        # group/world write access, but repair broader read/execute bits after the
+        # contents validate so private keys are returned to owner-only mode.
+        if path.is_symlink() or not path.is_file() or st.st_size > 32768 or st.st_mode & 0o022:
             return None, None
         text = path.read_text(encoding="utf-8")
-        return text, validate_config(text)
+        details = validate_config(text)
+        if st.st_mode & 0o077:
+            atomic_write(path, text, 0o600)
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+        return text, details
     except (OSError, UnicodeError, ValueError, subprocess.SubprocessError):
         return None, None
 
@@ -245,8 +250,10 @@ def config_unusable_reason(path):
         return "path is not a regular file"
     if st.st_size > 32768:
         return "file is larger than 32 KiB"
+    if st.st_mode & 0o022:
+        return "file is writable by group or other users; remove group/world write permissions"
     if st.st_mode & 0o077:
-        return "file permissions expose it to group or other users; set mode 0600"
+        return "file permissions need tightening, but the manager could not set mode 0600"
     try:
         text = path.read_text(encoding="utf-8")
         validate_config(text)
