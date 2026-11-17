@@ -78,7 +78,7 @@ elif [ "$ACTION" = activate-config ]; then
     message=vpn-container-metadata-unavailable
   else
     dependents=""
-    for container in $(docker ps --quiet --no-trunc); do
+    for container in $(docker ps --all --quiet --no-trunc); do
       [ "$container" != "$vpn_id" ] || continue
       network_mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$container" 2>/dev/null || true)
       case "$network_mode" in
@@ -104,7 +104,12 @@ elif [ "$ACTION" = activate-config ]; then
       else
         restart_pids=""
         for container in $dependents; do
-          (docker restart --time 15 "$container" >/dev/null 2>&1) &
+          (dependent_running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)
+           if [ "$dependent_running" = true ]; then
+             docker restart --time 15 "$container" >/dev/null 2>&1
+           else
+             docker start "$container" >/dev/null 2>&1
+           fi) &
           restart_pids="$restart_pids $!"
         done
         restart_failed=false
