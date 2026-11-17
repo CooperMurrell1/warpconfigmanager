@@ -52,9 +52,14 @@ def validate_config_filename(value):
     return value
 
 
-def unique_saved_config_name(conn):
+def unique_saved_config_name(conn, prefix="Untitled Config", numbered=False):
     names = {row["name"].casefold() for row in conn.execute("SELECT name FROM saved_configs").fetchall()}
-    base = "Untitled Config"
+    base = prefix
+    if numbered:
+        suffix = 1
+        while (candidate := "%s (%d)" % (base, suffix)).casefold() in names:
+            suffix += 1
+        return candidate
     if base.casefold() not in names:
         return base
     suffix = 2
@@ -539,7 +544,7 @@ def add_generator_log(started_at, source, result, details, finished_at=None):
     write_public_state(STATE)
 
 
-def archive_config(text, filename=None, account_info=None):
+def archive_config(text, filename=None, account_info=None, display_name=None, automatic=False):
     try:
         details = parse_config(text)
         try: public_key = interface_public_key(text)
@@ -562,8 +567,11 @@ def archive_config(text, filename=None, account_info=None):
                 return
             config_id = secrets.token_hex(16)
             atomic_write(ARCHIVE_DIR / (config_id + ".conf"), text, 0o600)
+            archive_name = validate_saved_config_name(display_name) if display_name else unique_saved_config_name(conn, "Auto", True) if automatic else unique_saved_config_name(conn)
+            if conn.execute("SELECT 1 FROM saved_configs WHERE name=? COLLATE NOCASE", (archive_name,)).fetchone():
+                raise ValueError("A saved config already uses the name %s" % archive_name)
             conn.execute("INSERT INTO saved_configs(id,filename,name,saved_at,expires_at,sha256,address,endpoint,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,dns,mtu,allowed_ips,keepalive) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                         (config_id, filename or STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), unique_saved_config_name(conn), saved, expires, digest, details["address"], details["endpoint"],
+                         (config_id, filename or STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), archive_name, saved, expires, digest, details["address"], details["endpoint"],
                           account.get("account_type"), account.get("account_id"), account.get("device_id"), account.get("created_at"), account.get("expires_at"), public_key, details["dns"], details["mtu"], details["allowed_ips"], details["keepalive"]))
             conn.commit()
         prune_archives()
@@ -683,17 +691,17 @@ def host_request(action, expected_public_key=None):
         raise RuntimeError("Timed out after 240 seconds waiting for the host VPN helper")
 
 
-def run_update(source, lock_acquired=False):
+def run_update(source, lock_acquired=False, config_name=None):
     if not lock_acquired and not UPDATE_LOCK.acquire(blocking=False):
         return False
     try:
-        return _run_update_locked(source)
+        return _run_update_locked(source, config_name)
     finally:
         if UPDATE_LOCK.locked():
             UPDATE_LOCK.release()
 
 
-def _run_update_locked(source):
+def _run_update_locked(source, config_name=None):
     started = now()
     start_mono = time.monotonic()
     previous, _ = active_config()
@@ -754,7 +762,7 @@ def _run_update_locked(source):
                                "error": activation.get("message", "Tunnel IP probe unavailable")}
             STATE["next_run_at"] = (dt.datetime.now(UTC) + dt.timedelta(seconds=STATE["interval_seconds"])).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         record_history({"started_at": started, "finished_at": completed, "result": "success", "source": source, "error": None, "duration_seconds": round(time.monotonic() - start_mono, 1)})
-        archive_config(candidate, account_info=account)
+        archive_config(candidate, account_info=account, display_name=config_name, automatic=source in ("scheduled", "startup"))
         add_run_detail("Generation completed successfully")
         add_generator_log(started, source, "success", STATE.get("_generator_details", []), completed)
         log_event("info", "New config installed and activated; restarted %d VPN-scoped container(s)" % int(activation.get("restarted_count", 1)), "config")
@@ -818,8 +826,20 @@ def process_ui_command():
         save_state(STATE)
     action = command.get("action")
     if action == "update":
+        config_name = command.get("config_name")
+        try:
+            if not isinstance(config_name, str):
+                raise ValueError("Enter a name for this config")
+            config_name = validate_saved_config_name(config_name)
+            with db_session() as conn:
+                if conn.execute("SELECT 1 FROM saved_configs WHERE name=? COLLATE NOCASE", (config_name,)).fetchone():
+                    raise ValueError("A saved config already uses that name")
+        except ValueError as exc:
+            result = {"id": request_id, "ok": False, "message": str(exc)}
+            atomic_write(UI_RESULT, json.dumps(result), 0o640)
+            return
         if UPDATE_LOCK.acquire(blocking=False):
-            thread = threading.Thread(target=run_update, args=("manual", True), daemon=True)
+            thread = threading.Thread(target=run_update, args=("manual", True, config_name), daemon=True)
             try:
                 thread.start()
                 result = {"id": request_id, "ok": True, "message": "Update queued"}

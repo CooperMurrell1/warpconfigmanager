@@ -1,12 +1,11 @@
 "use client";
 
-import { Badge, Box, Button, Heading, HStack, SimpleGrid, Spinner, Stack, Text } from "@chakra-ui/react";
+import { Badge, Box, Heading, HStack, SimpleGrid, Spinner, Stack, Text } from "@chakra-ui/react";
 import { useDashboard, when } from "@/components/dashboard-context";
 import { GlassCard, PageHeader, StatusBadge } from "@/components/dashboard-ui";
 
 export default function HomePage() {
-  const { state, busy, post } = useDashboard();
-  const admin = state?.current_user_is_admin === true;
+  const { state } = useDashboard();
   const history = (state?.history || []).slice().reverse().slice(0, 5);
   const logs = (state?.logs || []).slice().reverse().slice(0, 5);
   const activeConfigName = state?.saved_configs?.find(item => item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key)?.name || "Active config";
@@ -16,20 +15,7 @@ export default function HomePage() {
       <PageHeader
         eyebrow="Overview"
         title={`Welcome${state?.current_user ? `, ${state.current_user}` : ""}`}
-        description="See the tunnel at a glance and generate a fresh Cloudflare WARP configuration when you need one."
-        action={
-          <Button
-            size="lg"
-            bg="cyan.400"
-            color="gray.950"
-            _hover={{ bg: "cyan.300" }}
-            loading={busy}
-            disabled={!admin || state?.status === "running"}
-            onClick={() => post("/api/update", {}, "Configuration update started.")}
-          >
-            Update config now
-          </Button>
-        }
+        description="See the tunnel at a glance and monitor your Cloudflare WARP configuration."
       />
 
       <SimpleGrid columns={{ base: 1, lg: 3 }} gap="5" mb="5">

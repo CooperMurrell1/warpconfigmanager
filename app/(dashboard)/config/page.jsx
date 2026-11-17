@@ -1,17 +1,19 @@
 "use client";
 
-import { Alert, Box, Button, Heading, SimpleGrid, Stack, Text } from "@chakra-ui/react";
+import { Alert, Box, Button, Dialog, Heading, Input, Portal, SimpleGrid, Stack, Text } from "@chakra-ui/react";
 import { useEffect, useState } from "react";
 import { useDashboard, when } from "@/components/dashboard-context";
 import { Detail, GlassCard, PageHeader, StatusBadge } from "@/components/dashboard-ui";
 import { SavedConfigActions, SavedConfigsTable } from "@/components/saved-configs-table";
 
 export default function ConfigPage() {
-  const { state } = useDashboard();
+  const { state, busy, post } = useDashboard();
   const [selectedId, setSelectedId] = useState(null);
   const [privateKey, setPrivateKey] = useState("");
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
+  const [newConfigName, setNewConfigName] = useState("");
   const admin = state?.current_user_is_admin === true;
   const activeSaved = state?.saved_configs?.find(item => item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key) || null;
   const selectedSaved = state?.saved_configs?.find(item => item.id === selectedId) || activeSaved;
@@ -32,6 +34,16 @@ export default function ConfigPage() {
     created_at: selectedSaved.account_created_at,
     expires_at: selectedSaved.account_expires_at,
   } : state?.warp_account;
+  function nextConfigName() {
+    const names = new Set((state?.saved_configs || []).map(item => (item.name || "").toLocaleLowerCase()));
+    let number = 1;
+    while (names.has(`untitled config (${number})`.toLocaleLowerCase())) number += 1;
+    return `Untitled Config (${number})`;
+  }
+  async function addConfig() {
+    const saved = await post("/api/update", { config_name: newConfigName }, "Config generation started.");
+    if (saved) setAddOpen(false);
+  }
 
   useEffect(() => {
     setPrivateKey("");
@@ -62,7 +74,7 @@ export default function ConfigPage() {
   }
 
   return <>
-    <PageHeader eyebrow="WireGuard" title="Configuration" description="Inspect the active tunnel profile or choose a saved version. Select a row to view its details; use Activate to switch the running tunnel." />
+    <PageHeader eyebrow="WireGuard" title="Configuration" description="Inspect the active tunnel profile or choose a saved version. Select a name to view its details." action={<Button bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} disabled={state?.status === "running" || !admin} onClick={() => { setNewConfigName(nextConfigName()); setAddOpen(true); }}>Add config</Button>} />
     {state?.status === "running" && state?.generator_stage && <GlassCard p="4" mb="5"><Text color="cyan.200" fontSize="sm">{state.generator_stage}</Text></GlassCard>}
 
     <SimpleGrid columns={{ base: 1, "2xl": 12 }} alignItems="start" gap="5">
@@ -124,5 +136,12 @@ export default function ConfigPage() {
         <SavedConfigsTable selectedId={selectedSaved?.id || null} onSelect={setSelectedId} />
       </Stack>
     </SimpleGrid>
+    <Dialog.Root open={addOpen} onOpenChange={event => setAddOpen(event.open)}>
+      <Portal><Dialog.Backdrop /><Dialog.Positioner><Dialog.Content bg="gray.900" color="gray.100" borderWidth="1px" borderColor="gray.700" rounded="2xl">
+        <Dialog.Header><Dialog.Title>Add config</Dialog.Title></Dialog.Header>
+        <Dialog.Body><Text color="gray.300" mb="3">Choose a name for the new generated config.</Text><Input autoFocus maxLength={64} value={newConfigName} onChange={event => setNewConfigName(event.target.value)} bg="rgba(2,6,23,.68)" borderColor="whiteAlpha.300" /></Dialog.Body>
+        <Dialog.Footer><Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button><Button bg="cyan.400" color="gray.950" loading={busy} disabled={!newConfigName.trim()} onClick={addConfig}>Create config</Button></Dialog.Footer>
+      </Dialog.Content></Dialog.Positioner></Portal>
+    </Dialog.Root>
   </>;
 }

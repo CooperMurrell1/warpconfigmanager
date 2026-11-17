@@ -4,6 +4,7 @@ import "./globals.css";
 export const metadata = {
   title: "WARP Config Manager",
   description: "Manage the media stack's Cloudflare WARP WireGuard configuration",
+  icons: { icon: "/jellyfin-icon.svg", shortcut: "/jellyfin-icon.svg" },
 };
 
 export default function RootLayout({ children }) {
