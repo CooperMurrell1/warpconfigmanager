@@ -1,19 +1,51 @@
 "use client";
 
-import { Alert, Box, Heading, SimpleGrid, Text } from "@chakra-ui/react";
+import { Alert, Box, Button, Heading, HStack, SimpleGrid, Text } from "@chakra-ui/react";
+import { useEffect, useState } from "react";
 import { useDashboard, when } from "@/components/dashboard-context";
 import { Detail, GlassCard, PageHeader, StatusBadge } from "@/components/dashboard-ui";
 
 export default function ConfigPage() {
   const { state } = useDashboard();
   const config = state?.config;
+  const [privateKey, setPrivateKey] = useState("");
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [keyError, setKeyError] = useState("");
+  const admin = state?.current_user_is_admin === true;
+
+  useEffect(() => {
+    if (!privateKey) return;
+    const timer = window.setTimeout(() => setPrivateKey(""), 30000);
+    return () => window.clearTimeout(timer);
+  }, [privateKey]);
+
+  async function loadPrivateKey() {
+    const csrfItem = document.cookie.split("; ").find(value => value.startsWith("warp_csrf="));
+    const csrf = csrfItem ? decodeURIComponent(csrfItem.split("=").slice(1).join("=")) : "";
+    setKeyBusy(true);
+    setKeyError("");
+    try {
+      const response = await fetch("/api/config-secret", {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrf },
+        cache: "no-store",
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not load the private key");
+      setPrivateKey(data.private_key);
+    } catch (caught) {
+      setKeyError(caught.message || "Could not load the private key");
+    } finally {
+      setKeyBusy(false);
+    }
+  }
 
   return (
     <>
       <PageHeader
         eyebrow="WireGuard"
         title="Current configuration"
-        description="Safe, non-secret details from the currently installed WireGuard configuration. Private keys and complete config contents are never returned to this page."
+        description="Configuration details from the currently installed WireGuard profile. Secret material is available only to Jellyfin administrators through an explicit, temporary reveal."
       />
 
       <SimpleGrid columns={{ base: 1, lg: 3 }} gap="5" mb="5">
@@ -35,6 +67,39 @@ export default function ConfigPage() {
           </SimpleGrid>
         ) : (
           <Text color="red.200">No usable configuration is currently installed.</Text>
+        )}
+      </GlassCard>
+
+      <GlassCard p={{ base: "5", md: "7" }} mb="5">
+        <Heading color="gray.50" size="md">Private key</Heading>
+        <Text color="gray.400" fontSize="sm" mt="2">Administrator-only. The key is loaded on demand, cleared from this page after 30 seconds, and remains blurred until hovered or focused.</Text>
+        {keyError && <Text color="red.200" mt="4">{keyError}</Text>}
+        {privateKey ? (
+          <Box mt="5">
+            <Box
+              tabIndex={0}
+              role="textbox"
+              aria-label="WireGuard private key; hover or focus to reveal"
+              p="4"
+              rounded="xl"
+              bg="rgba(2, 6, 23, 0.7)"
+              borderWidth="1px"
+              borderColor="rgba(148, 163, 184, 0.2)"
+              color="gray.100"
+              fontFamily="mono"
+              overflowWrap="anywhere"
+              filter="blur(7px)"
+              userSelect="none"
+              transition="filter 160ms ease"
+              _hover={{ filter: "blur(0)", userSelect: "text" }}
+              _focus={{ filter: "blur(0)", userSelect: "text", outline: "2px solid", outlineColor: "cyan.400" }}
+            >
+              {privateKey}
+            </Box>
+            <HStack mt="4"><Button variant="outline" color="gray.100" borderColor="gray.600" onClick={() => setPrivateKey("")}>Hide key now</Button></HStack>
+          </Box>
+        ) : (
+          <Button mt="5" bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={keyBusy} disabled={!admin} onClick={loadPrivateKey}>Load private key</Button>
         )}
       </GlassCard>
 

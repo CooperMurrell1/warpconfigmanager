@@ -489,9 +489,30 @@ def process_ui_command():
                 save_state(STATE)
             log_event("info", "Schedule interval changed to %d seconds" % seconds)
             result = {"id": request_id, "ok": True, "message": "Interval saved"}
+    elif action == "private-key":
+        try:
+            if ACTIVE.is_symlink() or not ACTIVE.is_file() or ACTIVE.stat().st_size > 32768:
+                raise ValueError("No usable active config is installed")
+            config_text = ACTIVE.read_text(encoding="utf-8")
+            private = re.search(r"(?im)^\s*PrivateKey\s*=\s*(\S+)\s*$", config_text)
+            if not private:
+                raise ValueError("Private key is not present in the active config")
+            result = {"id": request_id, "ok": True, "private_key": private.group(1)}
+        except (OSError, UnicodeError, ValueError) as exc:
+            result = {"id": request_id, "ok": False, "message": str(exc) or "Could not read the private key"}
     else:
         result = {"id": request_id, "ok": False, "message": "Unsupported action"}
     atomic_write(UI_RESULT, json.dumps(result), 0o640)
+    if action == "private-key":
+        def expire_private_key_result(expected_id):
+            STOP.wait(15)
+            try:
+                current = json.loads(UI_RESULT.read_text(encoding="utf-8"))
+                if current.get("id") == expected_id:
+                    UI_RESULT.unlink()
+            except (OSError, ValueError):
+                pass
+        threading.Thread(target=expire_private_key_result, args=(request_id,), daemon=True).start()
 
 
 def scheduler_loop():
