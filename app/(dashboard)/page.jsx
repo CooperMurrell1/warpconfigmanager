@@ -9,6 +9,7 @@ export default function HomePage() {
   const admin = state?.current_user_is_admin === true;
   const history = (state?.history || []).slice().reverse().slice(0, 5);
   const logs = (state?.logs || []).slice().reverse().slice(0, 5);
+  const activeConfigName = state?.saved_configs?.find(item => item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key)?.name || "Active config";
 
   return (
     <>
@@ -54,7 +55,7 @@ export default function HomePage() {
           <Stack gap="3" mt="6">
             <Box><Text color="gray.500" fontSize="xs">LAST SUCCESS</Text><Text color="gray.100" fontSize="sm" mt="1">{when(state?.last_success_at)}</Text></Box>
             <Box><Text color="gray.500" fontSize="xs">NEXT SCHEDULED RUN</Text><Text color="gray.100" fontSize="sm" mt="1">{when(state?.next_run_at)}</Text></Box>
-            <Box><Text color="gray.500" fontSize="xs">MANAGED CONFIG</Text><Text color="gray.100" fontSize="sm" mt="1">{state?.config_filename || "wg0.conf"}</Text></Box>
+            <Box><Text color="gray.500" fontSize="xs">ACTIVE CONFIG</Text><Text color="gray.100" fontSize="sm" mt="1">{activeConfigName}</Text></Box>
           </Stack>
         </GlassCard>
       </SimpleGrid>

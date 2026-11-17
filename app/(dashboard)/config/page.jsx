@@ -4,7 +4,7 @@ import { Alert, Box, Button, Heading, SimpleGrid, Stack, Text } from "@chakra-ui
 import { useEffect, useState } from "react";
 import { useDashboard, when } from "@/components/dashboard-context";
 import { Detail, GlassCard, PageHeader, StatusBadge } from "@/components/dashboard-ui";
-import { SavedConfigsTable } from "@/components/saved-configs-table";
+import { SavedConfigActions, SavedConfigsTable } from "@/components/saved-configs-table";
 
 export default function ConfigPage() {
   const { state } = useDashboard();
@@ -13,7 +13,8 @@ export default function ConfigPage() {
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState("");
   const admin = state?.current_user_is_admin === true;
-  const selectedSaved = state?.saved_configs?.find(item => item.id === selectedId) || null;
+  const activeSaved = state?.saved_configs?.find(item => item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key) || null;
+  const selectedSaved = state?.saved_configs?.find(item => item.id === selectedId) || activeSaved;
   const selectedActive = !selectedSaved || Boolean(selectedSaved.interface_public_key && selectedSaved.interface_public_key === state?.config?.interface_public_key);
   const config = selectedSaved ? {
     address: selectedSaved.address,
@@ -70,6 +71,7 @@ export default function ConfigPage() {
           <GlassCard p="5"><Detail label="Viewing config">{selectedSaved?.name || "Active config"}{selectedActive && <Text as="span" color="cyan.200" ml="2">Active</Text>}</Detail></GlassCard>
           <GlassCard p="5"><Text color="gray.400" fontSize="xs" fontWeight="700" letterSpacing="0.08em">SERVICE STATUS</Text><Box mt="2"><StatusBadge status={state?.status} /></Box><Text color="gray.500" fontSize="xs" mt="2">Last successful update {when(state?.last_success_at)}</Text></GlassCard>
         </SimpleGrid>
+        {selectedSaved && <SavedConfigActions config={selectedSaved} onDeleted={() => setSelectedId(null)} />}
 
         <GlassCard p={{ base: "5", md: "6" }}>
           <Heading color="gray.50" size="md" mb="5">Interface and peer</Heading>

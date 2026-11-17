@@ -11,52 +11,47 @@ function csrf() {
 }
 
 export function SavedConfigsTable({ selectedId, onSelect }) {
-  const { state, refresh, setError, setNotice } = useDashboard();
-  const [busy, setBusy] = useState("");
-  const [editingId, setEditingId] = useState("");
-  const [name, setName] = useState("");
-  const configs = state?.saved_configs || [];
-  const sorted = [...configs].sort((a, b) => {
+  const { state } = useDashboard();
+  const configs = [...(state?.saved_configs || [])].sort((a, b) => {
     const activeA = a.interface_public_key && a.interface_public_key === state?.config?.interface_public_key;
     const activeB = b.interface_public_key && b.interface_public_key === state?.config?.interface_public_key;
     return Number(activeB) - Number(activeA) || new Date(b.saved_at) - new Date(a.saved_at);
   });
+  return <GlassCard p="3"><Stack gap="2">
+    {configs.length ? configs.map(item => {
+      const active = item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key;
+      return <Box key={item.id} p="3" rounded="xl" borderWidth="1px" borderColor={selectedId === item.id ? "cyan.300" : "whiteAlpha.200"} bg={selectedId === item.id || active ? "rgba(8,145,178,.16)" : "rgba(15,23,42,.4)"}>
+        <HStack justify="space-between" gap="2"><Button variant="ghost" p="0" height="auto" minW="0" whiteSpace="normal" color="gray.100" fontWeight="700" textAlign="left" onClick={() => onSelect(item.id)}>{item.name || "Untitled Config"}</Button>{active && <Badge colorPalette="cyan">Active</Badge>}</HStack>
+        <Text color="gray.400" fontSize="xs" mt="1">{when(item.saved_at)}</Text>
+      </Box>;
+    }) : <Text color="gray.400" p="2">No saved configs yet.</Text>}
+  </Stack></GlassCard>;
+}
 
-  async function action(id, actionName, extra = {}) {
-    setBusy(id); setError("");
+export function SavedConfigActions({ config, onDeleted }) {
+  const { state, refresh, setError, setNotice } = useDashboard();
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(config?.name || "Untitled Config");
+  if (!config) return null;
+
+  async function post(action, extra = {}) {
+    setBusy(true); setError("");
     try {
-      const response = await fetch("/api/saved-configs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf() },
-        body: JSON.stringify({ archive_id: id, action: actionName, ...extra }),
-      });
+      const response = await fetch("/api/saved-configs", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf() }, body: JSON.stringify({ archive_id: config.id, action, ...extra }) });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || data.message || "Could not update saved config");
+      if (!response.ok) throw new Error(data.error || data.message || "Could not update config");
       setNotice(data.message || "Saved."); await refresh();
-      if (actionName === "rename") setEditingId("");
+      if (action === "rename") setEditing(false);
+      if (action === "delete") onDeleted?.();
     } catch (error) { setError(error.message); }
-    finally { setBusy(""); }
+    finally { setBusy(false); }
   }
 
-  return <GlassCard p={{ base: "3", md: "4" }}>
-    <Stack gap="3">
-      {sorted.length ? sorted.map(item => {
-        const active = item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key;
-        const selected = selectedId === item.id;
-        return <Box key={item.id} p="3" rounded="xl" borderWidth="1px" borderColor={selected ? "cyan.300" : "whiteAlpha.200"} bg={selected || active ? "rgba(8,145,178,.16)" : "rgba(15,23,42,.4)"} minW="0">
-          <HStack justify="space-between" align="start" gap="2">
-            {editingId === item.id ? <Input aria-label="Config name" autoFocus value={name} maxLength={64} onChange={event => setName(event.target.value)} size="sm" bg="rgba(2,6,23,.68)" borderColor="whiteAlpha.300" onKeyDown={event => { if (event.key === "Enter") action(item.id, "rename", { name }); if (event.key === "Escape") setEditingId(""); }} /> : <Button variant="ghost" color="gray.100" fontWeight="700" whiteSpace="normal" height="auto" p="0" textAlign="left" minW="0" onClick={() => onSelect?.(item.id)}>{item.name || "Untitled Config"}</Button>}
-            {active && <Badge colorPalette="cyan" flexShrink="0">Active</Badge>}
-          </HStack>
-          <Text color="gray.400" fontSize="xs" mt="1">Saved {when(item.saved_at)}</Text>
-          <HStack gap="2" mt="3" flexWrap="wrap">
-            {editingId === item.id ? <><Button size="sm" bg="cyan.400" color="gray.950" loading={busy === item.id} onClick={() => action(item.id, "rename", { name })}>Save name</Button><Button size="sm" variant="outline" color="gray.100" onClick={() => setEditingId("")}>Cancel</Button></> : <Button size="sm" variant="outline" color="gray.100" onClick={() => { setEditingId(item.id); setName(item.name || "Untitled Config"); }}>Rename</Button>}
-            <Button size="sm" bg="cyan.400" color="gray.950" loading={busy === item.id && state?.status === "running"} disabled={state?.status === "running"} onClick={() => { onSelect?.(item.id); action(item.id, "restore"); }}>Activate</Button>
-            <Button asChild size="sm" variant="outline" color="gray.100" borderColor="whiteAlpha.300"><a href={`/api/saved-configs?archive_id=${encodeURIComponent(item.id)}`}>Download</a></Button>
-            <Button size="sm" colorPalette="red" variant="outline" loading={busy === item.id} onClick={() => { if (window.confirm("Delete this saved config?")) action(item.id, "delete"); }}>Delete</Button>
-          </HStack>
-        </Box>;
-      }) : <Text color="gray.300" p="2">No saved configs yet.</Text>}
-    </Stack>
-  </GlassCard>;
+  return <GlassCard p="4"><Text color="gray.400" fontSize="xs" fontWeight="700" letterSpacing=".08em">CONFIG ACTIONS</Text><HStack mt="3" gap="2" flexWrap="wrap">
+    {editing ? <><Input aria-label="Config name" maxLength={64} value={name} onChange={event => setName(event.target.value)} w={{ base: "full", md: "240px" }} bg="rgba(2,6,23,.68)" borderColor="whiteAlpha.300" /><Button loading={busy} onClick={() => post("rename", { name })}>Save name</Button><Button variant="outline" onClick={() => setEditing(false)}>Cancel</Button></> : <Button variant="outline" onClick={() => { setName(config.name || "Untitled Config"); setEditing(true); }}>Rename</Button>}
+    <Button bg="cyan.400" color="gray.950" disabled={state?.status === "running"} loading={busy && state?.status === "running"} onClick={() => post("restore")}>Activate</Button>
+    <Button asChild variant="outline" color="gray.100" borderColor="whiteAlpha.300"><a href={`/api/saved-configs?archive_id=${encodeURIComponent(config.id)}`}>Download</a></Button>
+    <Button colorPalette="red" variant="outline" loading={busy} onClick={() => { if (window.confirm("Delete this saved config?")) post("delete"); }}>Delete</Button>
+  </HStack></GlassCard>;
 }
