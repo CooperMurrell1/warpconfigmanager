@@ -974,9 +974,21 @@ def process_ui_command():
             result = {"id": request_id, "ok": True, "message": "WARP registration settings saved; they apply to the next config generation"}
     elif action == "private-key":
         try:
-            if ACTIVE.is_symlink() or not ACTIVE.is_file() or ACTIVE.stat().st_size > 32768:
-                raise ValueError("No usable active config is installed")
-            config_text = ACTIVE.read_text(encoding="utf-8")
+            archive_id = command.get("archive_id")
+            if archive_id:
+                if not re.fullmatch(r"[a-f0-9]{32}", archive_id):
+                    raise ValueError("Invalid saved config")
+                with db_session() as conn:
+                    exists = conn.execute("SELECT 1 FROM saved_configs WHERE id=?", (archive_id,)).fetchone()
+                if not exists:
+                    raise ValueError("Saved config was not found")
+                config_path = ARCHIVE_DIR / (archive_id + ".conf")
+            else:
+                config_path = ACTIVE
+            if config_path.is_symlink() or not config_path.is_file() or config_path.stat().st_size > 32768:
+                raise ValueError("Config file is unavailable")
+            config_text = config_path.read_text(encoding="utf-8")
+            validate_config(config_text)
             private = re.search(r"(?im)^\s*PrivateKey\s*=\s*(\S+)\s*$", config_text)
             if not private:
                 raise ValueError("Private key is not present in the active config")

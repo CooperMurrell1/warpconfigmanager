@@ -11,7 +11,13 @@ export async function POST(request) {
   if (csrf) return csrf;
 
   try {
-    const result = await submitUiCommand({ action: "private-key" }, 12000, true);
+    let body = {};
+    try { body = await request.json(); } catch {}
+    const archiveId = body?.archive_id;
+    if (archiveId !== undefined && !/^[a-f0-9]{32}$/.test(archiveId)) {
+      return NextResponse.json({ error: "Invalid saved config" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+    }
+    const result = await submitUiCommand({ action: "private-key", ...(archiveId ? { archive_id: archiveId } : {}) }, 12000, true);
     if (result.pending) {
       return NextResponse.json({ error: "Private key request timed out" }, { status: 504, headers: { "Cache-Control": "no-store" } });
     }

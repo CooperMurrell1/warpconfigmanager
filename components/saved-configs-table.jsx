@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Badge, Box, Button, HStack, Input, Stack, Text } from "@chakra-ui/react";
+import { Badge, Box, Button, Dialog, HStack, Input, Portal, Stack, Text } from "@chakra-ui/react";
 import { useDashboard, when } from "@/components/dashboard-context";
 import { GlassCard } from "@/components/dashboard-ui";
 
@@ -42,6 +42,7 @@ export function SavedConfigActions({ config, onDeleted }) {
   const { state, refresh, setError, setNotice } = useDashboard();
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [name, setName] = useState(config?.name || "Untitled Config");
   if (!config) return null;
 
@@ -53,15 +54,22 @@ export function SavedConfigActions({ config, onDeleted }) {
       if (!response.ok) throw new Error(data.error || data.message || "Could not update config");
       setNotice(data.message || "Saved."); await refresh();
       if (action === "rename") setEditing(false);
-      if (action === "delete") onDeleted?.();
+      if (action === "delete") { setDeleteOpen(false); onDeleted?.(); }
     } catch (error) { setError(error.message); }
     finally { setBusy(false); }
   }
 
-  return <GlassCard p="4"><Text color="gray.400" fontSize="xs" fontWeight="700" letterSpacing=".08em">CONFIG ACTIONS</Text><HStack mt="3" gap="2" flexWrap="wrap">
+  return <><GlassCard p="4"><Text color="gray.400" fontSize="xs" fontWeight="700" letterSpacing=".08em">CONFIG ACTIONS</Text><HStack mt="3" gap="2" flexWrap="wrap">
     {editing ? <><Input aria-label="Config name" maxLength={64} value={name} onChange={event => setName(event.target.value)} w={{ base: "full", md: "240px" }} bg="rgba(2,6,23,.68)" borderColor="whiteAlpha.300" color="gray.100" /><Button bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={busy} onClick={() => post("rename", { name })}>Save name</Button><Button variant="outline" bg="rgba(15,23,42,.65)" color="gray.100" borderColor="whiteAlpha.300" _hover={{ bg: "whiteAlpha.200" }} onClick={() => setEditing(false)}>Cancel</Button></> : <Button variant="outline" bg="rgba(15,23,42,.65)" color="gray.100" borderColor="whiteAlpha.300" _hover={{ bg: "whiteAlpha.200" }} onClick={() => { setName(config.name || "Untitled Config"); setEditing(true); }}><ActionIcon kind="rename" /> Rename</Button>}
     <Button bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} disabled={state?.status === "running"} loading={busy && state?.status === "running"} onClick={() => post("restore")}><ActionIcon kind="activate" /> Activate</Button>
     <Button asChild variant="outline" bg="rgba(15,23,42,.65)" color="gray.100" borderColor="whiteAlpha.300" _hover={{ bg: "whiteAlpha.200" }}><a href={`/api/saved-configs?archive_id=${encodeURIComponent(config.id)}`}><ActionIcon kind="download" /> Download</a></Button>
-    <Button colorPalette="red" variant="outline" bg="rgba(69,10,10,.36)" color="red.100" borderColor="red.400" _hover={{ bg: "rgba(127,29,29,.55)" }} loading={busy} onClick={() => { if (window.confirm("Delete this saved config?")) post("delete"); }}><ActionIcon kind="delete" /> Delete</Button>
-  </HStack></GlassCard>;
+    <Button colorPalette="red" variant="outline" bg="rgba(69,10,10,.36)" color="red.100" borderColor="red.400" _hover={{ bg: "rgba(127,29,29,.55)" }} loading={busy} onClick={() => setDeleteOpen(true)}><ActionIcon kind="delete" /> Delete</Button>
+  </HStack></GlassCard>
+  <Dialog.Root open={deleteOpen} onOpenChange={event => setDeleteOpen(event.open)}>
+    <Portal><Dialog.Backdrop bg="blackAlpha.700" /><Dialog.Positioner><Dialog.Content bg="rgba(10,15,28,.96)" color="gray.100" borderWidth="1px" borderColor="rgba(248,113,113,.35)" rounded="2xl" backdropFilter="blur(24px)" boxShadow="0 24px 80px rgba(0,0,0,.55)">
+      <Dialog.Header><Dialog.Title>Delete saved config?</Dialog.Title></Dialog.Header>
+      <Dialog.Body><Text color="gray.300">“{config.name || "Untitled Config"}” will be permanently removed.</Text></Dialog.Body>
+      <Dialog.Footer><Button variant="outline" bg="rgba(15,23,42,.65)" color="gray.100" borderColor="whiteAlpha.300" onClick={() => setDeleteOpen(false)}>Cancel</Button><Button color="red.50" bg="red.700" _hover={{ bg: "red.600" }} loading={busy} onClick={() => post("delete")}>Delete config</Button></Dialog.Footer>
+    </Dialog.Content></Dialog.Positioner></Portal>
+  </Dialog.Root></>;
 }

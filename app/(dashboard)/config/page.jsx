@@ -66,7 +66,7 @@ export default function ConfigPage() {
     setKeyBusy(true);
     setKeyError("");
     try {
-      const response = await fetch("/api/config-secret", { method: "POST", headers: { "X-CSRF-Token": csrf }, cache: "no-store" });
+      const response = await fetch("/api/config-secret", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(selectedSaved ? { archive_id: selectedSaved.id } : {}), cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not load the private key");
       setPrivateKey(data.private_key);
@@ -120,14 +120,14 @@ export default function ConfigPage() {
 
         <GlassCard p={{ base: "5", md: "6" }}>
           <Heading color="gray.50" size="md">Private key</Heading>
-          {selectedActive ? <>
-            <Text color="gray.400" fontSize="sm" mt="2">Administrator-only. Loaded on demand, cleared after 30 seconds, and blurred until hovered or focused.</Text>
+          <>
+            <Text color="gray.400" fontSize="sm" mt="2">Admin only · hidden after 30 seconds.</Text>
             {keyError && <Text color="red.200" mt="4">{keyError}</Text>}
             {privateKey ? <Box mt="5">
               <Box tabIndex={0} role="textbox" aria-label="WireGuard private key; hover or focus to reveal" p="4" rounded="xl" bg="rgba(2, 6, 23, 0.7)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.2)" color="gray.100" fontFamily="mono" overflowWrap="anywhere" filter="blur(7px)" userSelect="none" transition="filter 160ms ease" _hover={{ filter: "blur(0)", userSelect: "text" }} _focus={{ filter: "blur(0)", userSelect: "text", outline: "2px solid", outlineColor: "cyan.400" }}>{privateKey}</Box>
               <Button mt="4" variant="outline" color="gray.100" borderColor="gray.600" onClick={() => setPrivateKey("")}>Hide key now</Button>
             </Box> : <Button mt="5" bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={keyBusy} disabled={!admin} onClick={loadPrivateKey}>Load private key</Button>}
-          </> : <Text color="gray.400" fontSize="sm" mt="2">Select the active config to reveal its private key. Archived private keys are never revealed from this view.</Text>}
+          </>
         </GlassCard>
 
         <Alert.Root status="warning" rounded="2xl" bg="rgba(120, 53, 15, 0.48)" borderWidth="1px" borderColor="rgba(251, 146, 60, 0.25)" color="orange.50" p="5">

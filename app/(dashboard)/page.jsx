@@ -1,13 +1,11 @@
 "use client";
 
-import { Badge, Box, Heading, HStack, SimpleGrid, Spinner, Stack, Text } from "@chakra-ui/react";
+import { Box, Heading, HStack, SimpleGrid, Spinner, Stack, Text } from "@chakra-ui/react";
 import { useDashboard, when } from "@/components/dashboard-context";
 import { GlassCard, PageHeader, StatusBadge } from "@/components/dashboard-ui";
 
 export default function HomePage() {
   const { state } = useDashboard();
-  const history = (state?.history || []).slice().reverse().slice(0, 5);
-  const logs = (state?.logs || []).slice().reverse().slice(0, 5);
   const activeConfigName = state?.saved_configs?.find(item => item.interface_public_key && item.interface_public_key === state?.config?.interface_public_key)?.name || "Active config";
 
   return (
@@ -46,37 +44,6 @@ export default function HomePage() {
         </GlassCard>
       </SimpleGrid>
 
-      <SimpleGrid columns={{ base: 1, xl: 2 }} gap="5">
-        <GlassCard p="6">
-          <Heading color="gray.50" size="md" mb="5">Recent update status</Heading>
-          <Stack gap="4">
-            {history.length ? history.map((item, index) => (
-              <Box key={`${item.started_at}-${index}`} pb="4" borderBottomWidth={index === history.length - 1 ? 0 : 1} borderColor="rgba(148, 163, 184, 0.14)">
-                <HStack justify="space-between" align="start" gap="3">
-                  <HStack><Badge colorPalette={item.result === "failed" ? "red" : "teal"}>{item.result}</Badge><Text color="gray.200" fontSize="sm">{item.source}</Text></HStack>
-                  <Text color="gray.500" fontSize="xs" textAlign="right">{when(item.started_at)}</Text>
-                </HStack>
-                {item.error && <Text color="red.200" fontSize="sm" mt="2">{item.error}</Text>}
-              </Box>
-            )) : <Text color="gray.400">No update attempts recorded yet.</Text>}
-          </Stack>
-        </GlassCard>
-
-        <GlassCard p="6">
-          <Heading color="gray.50" size="md" mb="5">Recent service activity</Heading>
-          <Stack gap="4">
-            {logs.length ? logs.map((item, index) => (
-              <Box key={`${item.at}-${index}`} pb="4" borderBottomWidth={index === logs.length - 1 ? 0 : 1} borderColor="rgba(148, 163, 184, 0.14)">
-                <HStack justify="space-between" align="start" gap="3">
-                  <Badge variant="outline" color="gray.200" borderColor="gray.600">{item.level}</Badge>
-                  <Text color="gray.500" fontSize="xs">{when(item.at)}</Text>
-                </HStack>
-                <Text color="gray.200" mt="2" fontSize="sm">{item.message}</Text>
-              </Box>
-            )) : <Text color="gray.400">No service activity recorded yet.</Text>}
-          </Stack>
-        </GlassCard>
-      </SimpleGrid>
     </>
   );
 }
