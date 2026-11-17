@@ -11,6 +11,7 @@ const navItems = [
   { href: "/config", label: "Config", mark: "C" },
   { href: "/logs", label: "Logs", mark: "L" },
   { href: "/settings", label: "Settings", mark: "S" },
+  { href: "/accounts", label: "Accounts", mark: "A", adminOnly: true },
 ];
 
 function NavGlyph({ name }) {
@@ -19,6 +20,7 @@ function NavGlyph({ name }) {
     Config: <><path d="M4 5h16M4 12h16M4 19h16" /><circle cx="9" cy="5" r="2" fill="currentColor" /><circle cx="15" cy="12" r="2" fill="currentColor" /><circle cx="8" cy="19" r="2" fill="currentColor" /></>,
     Logs: <><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" /></>,
     Settings: <><circle cx="12" cy="12" r="3" /><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.6a8 8 0 0 1-1.6.9l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.6-.9l-1.7.6-1.4-2.4 1.4-1.1a7 7 0 0 1 0-1.9l-1.4-1.1 1.4-2.4 1.7.6a8 8 0 0 1 1.6-.9l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.6.9l1.7-.6 1.4 2.4-1.4 1.1a7 7 0 0 1 0 1.8Z" transform="translate(-1 -1) scale(.95)" /></>,
+    Accounts: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.8M17 14a5 5 0 0 1 3.5 4.8" /></>,
   };
   return <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -113,7 +115,7 @@ function ShellContent({ children }) {
           <Box as="img" src="/jellyfin-icon.svg" alt="Jellyfin" width="10" height="10" />
           <Box><Text color="cyan.300" fontWeight="900" fontSize="xs" letterSpacing="0.18em">WARP TUNNEL</Text><Text color="gray.50" fontWeight="800" fontSize="lg" mt="1">Config Manager</Text></Box>
         </HStack>
-        <Stack gap="2">{navItems.map(item => <NavItem key={item.href} item={item} />)}</Stack>
+        <Stack gap="2">{navItems.filter(item => !item.adminOnly || state?.current_user_is_admin).map(item => <NavItem key={item.href} item={item} />)}</Stack>
       </Flex>
 
       <Box ml={{ base: "0", md: "260px" }} minH="100vh">
@@ -147,7 +149,7 @@ function ShellContent({ children }) {
 
         <Box display={{ base: "block", md: "none" }} px="4" pt="4">
           <HStack width="full" minW="0" overflow="hidden" bg="rgba(15, 23, 42, 0.66)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.16)" backdropFilter="blur(18px)" rounded="2xl" p="1" gap="1">
-            {navItems.map(item => <NavItem key={item.href} item={item} compact />)}
+            {navItems.filter(item => !item.adminOnly || state?.current_user_is_admin).map(item => <NavItem key={item.href} item={item} compact />)}
           </HStack>
         </Box>
 
