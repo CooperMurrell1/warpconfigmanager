@@ -1,28 +1,26 @@
 #!/bin/sh
 set -eu
 CONTROL=/opt/warp-manager/control/warp-config-manager
-REQUEST="$CONTROL/request.json"
-RESULT="$CONTROL/result.json"
+REQUEST="$CONTROL/manager-request.json"
+RESULT="$CONTROL/manager-result.json"
 
 if [ ! -f "$REQUEST" ] || [ -L "$REQUEST" ]; then exit 1; fi
 ID=$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([a-f0-9]\{32\}\)".*/\1/p' "$REQUEST" | head -n 1)
 ACTION=$(sed -n 's/.*"action"[[:space:]]*:[[:space:]]*"\([a-z-]*\)".*/\1/p' "$REQUEST" | head -n 1)
 EXPECTED_KEY=$(sed -n 's/.*"expected_public_key"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9+/=]*\)".*/\1/p' "$REQUEST" | head -n 1)
 case "$ID" in ''|*[!a-f0-9]*) exit 1 ;; esac
-[ "$ACTION" = probe-tunnel-ip ] || exit 1
+case "$ACTION" in probe-tunnel-ip|activate-config) ;; *) exit 1 ;; esac
 case "$EXPECTED_KEY" in *[!A-Za-z0-9+/=]*) exit 1 ;; esac
+[ "$ACTION" != activate-config ] || [ -n "$EXPECTED_KEY" ] || exit 1
 
 ok=true
 message=ok
 ip=""
 config_loaded=null
+restarted_count=0
 if [ -n "$EXPECTED_KEY" ]; then config_loaded=false; fi
 
-running=$(docker inspect --format '{{.State.Running}}' qbittorrentvpn 2>/dev/null || true)
-if [ "$running" != true ]; then
-  ok=false
-  message=vpn-container-not-running
-else
+probe_ip() {
   probe_status=0
   if docker exec qbittorrentvpn sh -c 'command -v curl >/dev/null 2>&1'; then
     value=$(docker exec qbittorrentvpn curl --fail --silent --show-error --max-time 10 https://api.ipify.org 2>/dev/null) || probe_status=$?
@@ -32,38 +30,112 @@ else
     value=""
     probe_status=127
   fi
-
   if [ "$probe_status" -eq 127 ]; then
-    ok=false
     message=vpn-probe-tool-missing
-  elif [ "$probe_status" -ne 0 ]; then
-    ok=false
-    message=tunnel-ip-probe-command-failed
-  else
-    case "$value" in
-      ''|*[!0-9a-fA-F:.]*)
-        ok=false
-        message=tunnel-ip-probe-invalid-response
-        ;;
-      *) ip="$value" ;;
-    esac
+    return 1
   fi
-fi
+  if [ "$probe_status" -ne 0 ]; then
+    message=tunnel-ip-probe-command-failed
+    return 1
+  fi
+  case "$value" in
+    ''|*[!0-9a-fA-F:.]*) message=tunnel-ip-probe-invalid-response; return 1 ;;
+    *) ip="$value"; return 0 ;;
+  esac
+}
 
-if [ "$ok" = true ] && [ -n "$EXPECTED_KEY" ]; then
+key_is_loaded() {
   interfaces=$(docker exec qbittorrentvpn wg show interfaces 2>/dev/null || true)
   for interface in $interfaces; do
     public_key=$(docker exec qbittorrentvpn wg show "$interface" public-key 2>/dev/null || true)
-    if [ "$public_key" = "$EXPECTED_KEY" ]; then
-      config_loaded=true
-      break
-    fi
+    if [ "$public_key" = "$EXPECTED_KEY" ]; then return 0; fi
   done
-  if [ "$config_loaded" = false ]; then message=generated-config-not-active; fi
+  return 1
+}
+
+running=$(docker inspect --format '{{.State.Running}}' qbittorrentvpn 2>/dev/null || true)
+if [ "$running" != true ]; then
+  ok=false
+  message=vpn-container-not-running
+elif [ "$ACTION" = activate-config ]; then
+  vpn_id=$(docker inspect --format '{{.Id}}' qbittorrentvpn 2>/dev/null || true)
+  vpn_project=$(docker inspect --format '{{if .Config.Labels}}{{index .Config.Labels "com.docker.compose.project"}}{{end}}' qbittorrentvpn 2>/dev/null || true)
+  if [ -z "$vpn_id" ] || [ -z "$vpn_project" ]; then
+    ok=false
+    message=vpn-container-metadata-unavailable
+  else
+    dependents=""
+    for container in $(docker ps --quiet); do
+      [ "$container" != "$vpn_id" ] || continue
+      network_mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$container" 2>/dev/null || true)
+      project=$(docker inspect --format '{{if .Config.Labels}}{{index .Config.Labels "com.docker.compose.project"}}{{end}}' "$container" 2>/dev/null || true)
+      if [ "$project" = "$vpn_project" ] && [ "$network_mode" = "container:$vpn_id" ]; then
+        dependents="$dependents $container"
+      fi
+    done
+
+    if ! docker restart --time 30 qbittorrentvpn >/dev/null 2>&1; then
+      ok=false
+      message=vpn-container-restart-failed
+    else
+      restarted_count=1
+      ready=false
+      attempt=0
+      while [ "$attempt" -lt 90 ]; do
+        state=$(docker inspect --format '{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' qbittorrentvpn 2>/dev/null || true)
+        case "$state" in 'true healthy'|'true none') ready=true; break ;; esac
+        attempt=$((attempt + 1))
+        sleep 1
+      done
+      if [ "$ready" != true ]; then
+        ok=false
+        message=vpn-container-not-ready
+      else
+        for container in $dependents; do
+          if docker restart --time 30 "$container" >/dev/null 2>&1; then
+            restarted_count=$((restarted_count + 1))
+          else
+            ok=false
+            message=dependent-container-restart-failed
+            break
+          fi
+        done
+      fi
+    fi
+  fi
+
+  if [ "$ok" = true ]; then
+    loaded=false
+    attempt=0
+    while [ "$attempt" -lt 90 ]; do
+      if key_is_loaded; then loaded=true; break; fi
+      attempt=$((attempt + 1))
+      sleep 1
+    done
+    if [ "$loaded" = true ]; then
+      config_loaded=true
+      message=config-activated
+      probe_ip || true
+    else
+      ok=false
+      message=generated-config-not-active
+    fi
+  fi
+else
+  if ! probe_ip; then ok=false; fi
+  if [ "$ok" = true ] && [ -n "$EXPECTED_KEY" ]; then
+    if key_is_loaded; then
+      config_loaded=true
+    else
+      config_loaded=false
+      message=generated-config-not-active
+    fi
+  fi
 fi
 
 umask 077
 tmp=$(mktemp "$CONTROL/.result.XXXXXX")
-printf '{"id":"%s","ok":%s,"message":"%s","ip":"%s","config_loaded":%s,"finished_at":"%s"}\n' "$ID" "$ok" "$message" "$ip" "$config_loaded" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+printf '{"id":"%s","ok":%s,"message":"%s","ip":"%s","config_loaded":%s,"restarted_count":%s,"finished_at":"%s"}\n' \
+  "$ID" "$ok" "$message" "$ip" "$config_loaded" "$restarted_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
 chmod 0600 "$tmp"
 mv -f "$tmp" "$RESULT"

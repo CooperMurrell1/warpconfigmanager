@@ -21,8 +21,8 @@ DB_FILE = DATA / "state.sqlite3"
 CONTROL = pathlib.Path("/control/warp-config-manager")
 UI_COMMAND = pathlib.Path("/ui-commands/request.json")
 UI_RESULT = pathlib.Path("/ui-commands/result.json")
-HOST_REQUEST = CONTROL / "request.json"
-HOST_RESULT = CONTROL / "result.json"
+HOST_REQUEST = CONTROL / "manager-request.json"
+HOST_RESULT = CONTROL / "manager-result.json"
 CONFIG_DIR = pathlib.Path("/config/wireguard")
 DEFAULT_CONFIG_FILENAME = "wg0.conf"
 ACTIVE = CONFIG_DIR / DEFAULT_CONFIG_FILENAME
@@ -320,17 +320,17 @@ def generate_candidate():
 
 
 def host_request(action, expected_public_key=None):
-    if action != "probe-tunnel-ip":
+    if action not in ("probe-tunnel-ip", "activate-config"):
         raise RuntimeError("Unsupported host action")
     with HOST_REQUEST_LOCK:
         request_id = uuid.uuid4().hex
         if not CONTROL.is_dir():
-            raise RuntimeError("Host tunnel probe is not installed")
+            raise RuntimeError("Host VPN manager is not installed")
         request = {"id": request_id, "action": action, "requested_at": now()}
         if expected_public_key:
             request["expected_public_key"] = expected_public_key
         atomic_write(HOST_REQUEST, json.dumps(request), 0o600)
-        deadline = time.monotonic() + 300
+        deadline = time.monotonic() + 600
         while time.monotonic() < deadline and not STOP.is_set():
             try:
                 result = json.loads(HOST_RESULT.read_text(encoding="utf-8"))
@@ -352,6 +352,7 @@ def run_update(source, lock_acquired=False):
     previous, _ = active_config()
     previous_pending = STATE.get("pending_apply", False)
     installed = False
+    activation_attempted = False
     with STATE_LOCK:
         STATE["status"] = "running"
         STATE["last_attempt_at"] = started
@@ -361,41 +362,57 @@ def run_update(source, lock_acquired=False):
     try:
         candidate = generate_candidate()
         validate_config(candidate)
+        candidate_key = interface_public_key(candidate)
         if previous is not None:
             atomic_write(BACKUP, previous, 0o600)
         atomic_write(ACTIVE, candidate, 0o600)
         installed = True
+        activation_attempted = True
+        activation = host_request("activate-config", candidate_key)
         completed = now()
         with STATE_LOCK:
             STATE["status"] = "success"
             STATE["last_success_at"] = completed
             STATE["last_error"] = None
-            STATE["pending_apply"] = True
+            STATE["pending_apply"] = False
+            try:
+                ipaddress.ip_address(activation.get("ip") or "")
+                STATE["ip"] = {"address": activation["ip"], "checked_at": completed, "error": None}
+            except ValueError:
+                STATE["ip"] = {"address": None, "checked_at": completed,
+                               "error": activation.get("message", "Tunnel IP probe unavailable")}
             STATE["next_run_at"] = (dt.datetime.now(UTC) + dt.timedelta(seconds=STATE["interval_seconds"])).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         record_history({"started_at": started, "finished_at": completed, "result": "success", "source": source, "error": None, "duration_seconds": round(time.monotonic() - start_mono, 1)})
-        log_event("warning", "New config installed atomically; automatic VPN activation is disabled and the config is pending manual activation")
+        log_event("info", "New config installed and activated; restarted %d VPN-scoped container(s)" % int(activation.get("restarted_count", 1)))
         return True
     except Exception as exc:
         if isinstance(exc, (RuntimeError, ValueError)) and str(exc):
             error = str(exc)
         else:
             error = "Candidate validation or installation failed (%s)" % type(exc).__name__
+        rollback_reactivated = False
         try:
             if installed:
                 if previous is None:
-                    try:
-                        ACTIVE.unlink()
-                    except FileNotFoundError:
-                        pass
+                    if activation_attempted:
+                        error += "; validated config left installed because no previous config exists"
+                    else:
+                        try:
+                            ACTIVE.unlink()
+                        except FileNotFoundError:
+                            pass
                 else:
                     atomic_write(ACTIVE, previous, 0o600)
+                    if activation_attempted:
+                        rollback = host_request("activate-config", interface_public_key(previous))
+                        rollback_reactivated = rollback.get("config_loaded") is True
         except Exception:
-            error += "; rollback needs attention"
+            error += "; previous config was restored but VPN reactivation needs attention"
         completed = now()
         with STATE_LOCK:
             STATE["status"] = "failed"
             STATE["last_error"] = error
-            STATE["pending_apply"] = previous_pending
+            STATE["pending_apply"] = False if rollback_reactivated else (True if installed and previous is None else previous_pending)
             STATE["next_run_at"] = (dt.datetime.now(UTC) + dt.timedelta(seconds=STATE["interval_seconds"])).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         record_history({"started_at": started, "finished_at": completed, "result": "failed", "source": source,
                         "error": error, "duration_seconds": round(time.monotonic() - start_mono, 1)})

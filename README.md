@@ -16,7 +16,9 @@ To update the upstream pin, review the [pinned script](https://github.com/lanrat
 
 Portainer inspection found a jellyfin stack with qbittorrentvpn using the custom WireGuard client and /opt/wireguard mounted at /config/wireguard. Prowlarr, Radarr, Sonarr, and FlareSolverr share the VPN container's network namespace. Jellyfin is on jellyfin_default; Nginx Proxy Manager uses nginx-proxy-manager_default.
 
-The manager joins the existing jellyfin default network for Jellyfin authentication and the existing NPM network for reverse proxy access. It does not join the VPN namespace. A probe-only host helper checks the public IP from inside qbittorrentvpn and compares the loaded WireGuard interface key with the selected config. The manager container has no Docker socket.
+The manager joins the existing jellyfin default network for Jellyfin authentication and the existing NPM network for reverse proxy access. It does not join the VPN namespace. A narrowly scoped host helper activates a validated config and checks the public IP from inside qbittorrentvpn. The manager container has no Docker socket.
+
+After a successful config refresh, the helper restarts qbittorrentvpn and discovers its dependents from Docker metadata. It restarts only running containers in the same Compose project whose network mode is exactly `container:<qbittorrentvpn-id>`. Stopped services remain stopped, containers in other stacks are excluded, and unrelated services such as Jellyfin and Seerr are not restarted.
 
 The default managed file is /config/wireguard/wg0.conf. The filename can be changed in the UI and is saved in SQLite. A new filename can only be selected if that existing file already contains a usable WireGuard config. Changing this setting does not rename or copy files and does not change the VPN container's config path. Before selecting another name, make sure the VPN container is configured to load it. After selection, future generated files are installed at that filename.
 
@@ -34,7 +36,9 @@ From a checkout of this repository on the Docker host, run:
 sudo sh ./host-setup.sh
 ~~~
 
-This creates persistent app directories, installs a root-run probe-only systemd path service, and enables it. It does not restart containers. The helper has only fixed Docker CLI probe operations against qbittorrentvpn; it does not expose the Docker socket to the app.
+This creates persistent app directories, installs the root-run `warp-vpn-manager.path` systemd unit, and enables it. The helper accepts only config activation and tunnel-probe requests for qbittorrentvpn. Its activation path can restart qbittorrentvpn and the namespace-bound services described above; it cannot update or recreate the Compose stack. The Docker socket is never mounted into the app container.
+
+The manager unit uses versioned `warp-vpn-manager` filenames and a separate control request, so installing it does not overwrite an older `warp-vpn-probe` helper. An older probe unit may remain installed but idle.
 
 The container creates /opt/warp-manager/data/session_secret only if it is missing. It never replaces an existing key. The same persistent data directory holds SQLite state and the optional WARP+ license file. Keep this directory root-owned and mode 0755. The setup script expects host group ID 1000 for the image's node process.
 
@@ -56,9 +60,9 @@ The host setup script and the stack service are separate one-time steps. After b
 
 ## Applying an update
 
-The updater installs a validated config atomically with mode 0600 and saves the previous usable file as *.last-good. Failed generation or validation leaves the active config untouched. The update history records each attempt and a safe error summary.
+The updater installs a validated config atomically with mode 0600 and saves the previous usable file as *.last-good. It then asks the host helper to restart qbittorrentvpn, waits for it to become ready, restarts only its running namespace-bound dependents, and verifies that the expected WireGuard public key is loaded. The update history records each attempt and a safe error summary.
 
-Per your request, the manager has no restart or reload action and does not restart any container or stack. After a new config is installed, the dashboard marks it as pending manual activation until the probe sees the matching WireGuard interface key. Apply the file manually in Portainer when ready. The displayed public IP is always probed from the currently running qBittorrentVPN tunnel; while an update is pending, it may still show the old tunnel IP.
+Generation or validation failures leave the active config and running tunnel untouched. If activation fails and a previous usable config exists, the manager restores it and asks the helper to reactivate it. When no previous config exists, the validated candidate is left installed for recovery rather than deleted. The helper does not restart Jellyfin, Seerr, databases, reverse proxies, or any container outside the qBittorrentVPN network namespace.
 
 ## Sign-in and state
 
@@ -83,6 +87,7 @@ To recover, restore those files and permissions, then start the existing jellyfi
 - If the manager exits during startup, check the required host directories exist and match the documented ownership and permissions.
 - If Jellyfin login fails, confirm the manager and Jellyfin share jellyfin_default and Jellyfin is reachable at http://jellyfin:8096.
 - If NPM cannot reach the dashboard, confirm both containers use nginx-proxy-manager_default and the proxy target is warp-config-manager:3000.
-- If the public IP is unavailable, check systemctl status warp-vpn-probe.path warp-vpn-probe.service, confirm the Docker CLI can inspect and exec into qbittorrentvpn, and verify curl is present in that container.
-- If the dashboard says the config is not active, confirm that qbittorrentvpn loads the selected filename, then manually restart the VPN-dependent services in Portainer.
+- If the public IP is unavailable, check `systemctl status warp-vpn-manager.path warp-vpn-manager.service`, confirm the Docker CLI can inspect and exec into qbittorrentvpn, and verify curl or wget is present in that container.
+- If activation fails, inspect `journalctl -u warp-vpn-manager.service`, confirm qbittorrentvpn has a Compose project label, and confirm dependent services use `network_mode: service:qbittorrentvpn` in Compose.
 - The tunnel and public-IP behavior has not been verified in this environment.
+

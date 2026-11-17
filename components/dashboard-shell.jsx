@@ -107,7 +107,7 @@ function ShellContent({ children }) {
           {error && <Alert.Root status="error" mb="5" rounded="xl" bg="rgba(127, 29, 29, 0.55)" color="red.50"><Alert.Indicator /><Alert.Title>{error}</Alert.Title></Alert.Root>}
           {notice && <Alert.Root status="success" mb="5" rounded="xl" bg="rgba(6, 78, 59, 0.55)" color="green.50"><Alert.Indicator /><Alert.Title>{notice}</Alert.Title></Alert.Root>}
           {state && !state.current_user_is_admin && <Alert.Root status="warning" mb="5" rounded="xl" bg="rgba(120, 53, 15, 0.56)" color="orange.50"><Alert.Indicator /><Alert.Title>A Jellyfin administrator account is required to change settings or update the config.</Alert.Title></Alert.Root>}
-          {state?.pending_apply && <Alert.Root status="warning" mb="5" rounded="xl" bg="rgba(120, 53, 15, 0.56)" color="orange.50"><Alert.Indicator /><Alert.Title>The selected config is not active in the running VPN tunnel. Apply it manually in Portainer when ready.</Alert.Title></Alert.Root>}
+          {state?.pending_apply && <Alert.Root status="warning" mb="5" rounded="xl" bg="rgba(120, 53, 15, 0.56)" color="orange.50"><Alert.Indicator /><Alert.Title>The selected config is not active in the running VPN tunnel. Check the host manager and VPN container logs.</Alert.Title></Alert.Root>}
           {children}
         </Container>
       </Box>

@@ -43,7 +43,7 @@ export default function ConfigPage() {
         <Box>
           <Alert.Title>Routing and exit-IP warning</Alert.Title>
           <Alert.Description color="orange.100" mt="1">
-            Replacing this file can change the VPN tunnel&apos;s public exit IP and routing behavior after the VPN container next loads it. The manager does not restart the stack.
+            Replacing this file can change the public exit IP and routing behavior. After a successful refresh, the manager restarts qBittorrentVPN and only the running services in the same Compose project that share its network namespace.
           </Alert.Description>
         </Box>
       </Alert.Root>

@@ -1,9 +1,9 @@
 [Unit]
-Description=Watch for a tunnel IP probe request from WARP Config Manager
+Description=Watch for a qBittorrentVPN management request from WARP Config Manager
 
 [Path]
-PathChanged=/opt/warp-manager/control/warp-config-manager/request.json
-Unit=warp-vpn-probe.service
+PathChanged=/opt/warp-manager/control/warp-config-manager/manager-request.json
+Unit=warp-vpn-manager.service
 
 [Install]
 WantedBy=multi-user.target

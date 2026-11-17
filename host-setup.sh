@@ -89,17 +89,17 @@ if systemctl is-enabled --quiet warp-vpn-reloader.path 2>/dev/null || systemctl 
   fail "A legacy restart helper is enabled or active. It was left untouched; review it before proceeding."
 fi
 
-install_new_or_identical "$SOURCE_DIR/systemd/warp-vpn-probe" /usr/local/sbin/warp-vpn-probe 0755
-install_new_or_identical "$SOURCE_DIR/systemd/warp-vpn-probe.service" /etc/systemd/system/warp-vpn-probe.service 0644
-install_new_or_identical "$SOURCE_DIR/systemd/warp-vpn-probe.path" /etc/systemd/system/warp-vpn-probe.path 0644
+install_new_or_identical "$SOURCE_DIR/systemd/warp-vpn-probe" /usr/local/sbin/warp-vpn-manager 0755
+install_new_or_identical "$SOURCE_DIR/systemd/warp-vpn-probe.service" /etc/systemd/system/warp-vpn-manager.service 0644
+install_new_or_identical "$SOURCE_DIR/systemd/warp-vpn-probe.path" /etc/systemd/system/warp-vpn-manager.path 0644
 
-WANTS=/etc/systemd/system/multi-user.target.wants/warp-vpn-probe.path
+WANTS=/etc/systemd/system/multi-user.target.wants/warp-vpn-manager.path
 if [ -L "$WANTS" ]; then
-  [ "$(readlink -f "$WANTS")" = /etc/systemd/system/warp-vpn-probe.path ] || fail "$WANTS points elsewhere; it was left untouched"
+  [ "$(readlink -f "$WANTS")" = /etc/systemd/system/warp-vpn-manager.path ] || fail "$WANTS points elsewhere; it was left untouched"
 elif [ -e "$WANTS" ]; then
   fail "$WANTS already exists and is not our symlink; it was left untouched"
 fi
 
 systemctl daemon-reload
-systemctl enable --now warp-vpn-probe.path
-echo "Host probe setup complete. Existing files were not overwritten or deleted."
+systemctl enable --now warp-vpn-manager.path
+echo "Host VPN manager setup complete. Existing files were not overwritten or deleted."
