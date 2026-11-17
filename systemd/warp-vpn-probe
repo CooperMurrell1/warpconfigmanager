@@ -84,6 +84,7 @@ key_is_loaded() {
 
 compose_declares_vpn_network() {
   cdc_container="$1"
+  cdc_project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cdc_container" 2>/dev/null || true)
   cdc_service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$cdc_container" 2>/dev/null || true)
   cdc_project_dir=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$cdc_container" 2>/dev/null || true)
   cdc_files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$cdc_container" 2>/dev/null || true)
@@ -92,7 +93,8 @@ compose_declares_vpn_network() {
     return 1
     ;;
   esac
-  [ -n "$cdc_service" ] && [ -n "$cdc_project_dir" ] && [ -n "$cdc_files" ] || return 1
+  [ -n "$cdc_project" ] && [ -n "$cdc_service" ] && [ -n "$cdc_project_dir" ] && [ -n "$cdc_files" ] || return 1
+  compose_project="$cdc_project"
   log "Compose source labels: project=$compose_project service=$cdc_service working_dir=$cdc_project_dir config_files=$cdc_files"
 
   cdc_host_project_dir=$(portainer_path_to_host "$cdc_project_dir")
@@ -128,10 +130,10 @@ compose_declares_vpn_network() {
 
   cdc_match=""
   if docker compose version >/dev/null 2>&1; then
-    cdc_match=$(docker compose --project-directory "$cdc_project_dir" "$@" config --format json 2>/dev/null |
+    cdc_match=$(docker compose --project-name "$cdc_project" --project-directory "$cdc_project_dir" "$@" config --format json 2>/dev/null |
       python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get("services",{}).get(sys.argv[1],{}); print("match" if s.get("network_mode") == "service:qbittorrentvpn" else "no-match")' "$cdc_service" 2>/dev/null || true)
   elif command -v docker-compose >/dev/null 2>&1; then
-    cdc_match=$(docker-compose --project-directory "$cdc_project_dir" "$@" config --format json 2>/dev/null |
+    cdc_match=$(docker-compose --project-name "$cdc_project" --project-directory "$cdc_project_dir" "$@" config --format json 2>/dev/null |
       python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get("services",{}).get(sys.argv[1],{}); print("match" if s.get("network_mode") == "service:qbittorrentvpn" else "no-match")' "$cdc_service" 2>/dev/null || true)
   else
     log "Compose config lookup unavailable for container=$cdc_container: Docker Compose command not found"
@@ -160,6 +162,7 @@ portainer_path_to_host() {
 }
 
 compose_force_recreate_service() {
+  cfr_project="$cdc_project"
   cfr_service="$cdc_service"
   cfr_project_dir="$cdc_project_dir"
   cfr_files="$cdc_files"
@@ -174,21 +177,21 @@ compose_force_recreate_service() {
     set -- "$@" -f "$cfr_file"
     [ -n "$cfr_remaining" ] || break
   done
-  log "recreating Compose service $compose_project/$cfr_service from its source config"
+  log "recreating Compose service $cfr_project/$cfr_service from its source config with project name $cfr_project"
   if docker compose version >/dev/null 2>&1; then
-    if docker compose --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service"; then
+    if docker compose --project-name "$cfr_project" --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service"; then
       :
     else
       cfr_status=$?
-      log "docker compose up failed for $compose_project/$cfr_service with exit code $cfr_status"
+      log "docker compose up failed for $cfr_project/$cfr_service with exit code $cfr_status"
       return 1
     fi
   elif command -v docker-compose >/dev/null 2>&1; then
-    if docker-compose --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service"; then
+    if docker-compose --project-name "$cfr_project" --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service"; then
       :
     else
       cfr_status=$?
-      log "docker-compose up failed for $compose_project/$cfr_service with exit code $cfr_status"
+      log "docker-compose up failed for $cfr_project/$cfr_service with exit code $cfr_status"
       return 1
     fi
   else
@@ -196,10 +199,10 @@ compose_force_recreate_service() {
   fi
 
   cfr_ids=$(docker ps --all --quiet --no-trunc \
-    --filter "label=com.docker.compose.project=$compose_project" \
+    --filter "label=com.docker.compose.project=$cfr_project" \
     --filter "label=com.docker.compose.service=$cfr_service")
   [ -n "$cfr_ids" ] || {
-    log "Compose reported success but no containers exist for $compose_project/$cfr_service"
+    log "Compose reported success but no containers exist for $cfr_project/$cfr_service"
     return 1
   }
   cfr_failed=false
@@ -208,7 +211,7 @@ compose_force_recreate_service() {
     cfr_mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$cfr_id" 2>/dev/null || true)
     cfr_namespace_id=""
     case "$cfr_mode" in container:*) cfr_namespace_id=$(docker inspect --format '{{.Id}}' "${cfr_mode#container:}" 2>/dev/null || true) ;; esac
-    log "post-recreate check service=$compose_project/$cfr_service id=$cfr_id running=$cfr_running network_mode=${cfr_mode:-unavailable} namespace_id=${cfr_namespace_id:-unresolved} expected_vpn_id=$vpn_id"
+    log "post-recreate check service=$cfr_project/$cfr_service id=$cfr_id running=$cfr_running network_mode=${cfr_mode:-unavailable} namespace_id=${cfr_namespace_id:-unresolved} expected_vpn_id=$vpn_id"
     if [ "$cfr_running" != true ] || [ "$cfr_namespace_id" != "$vpn_id" ]; then cfr_failed=true; fi
   done
   [ "$cfr_failed" = false ]
