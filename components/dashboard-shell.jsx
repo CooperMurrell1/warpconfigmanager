@@ -9,7 +9,6 @@ import { ProfileAvatar } from "@/components/profile-avatar";
 const navItems = [
   { href: "/", label: "Home", mark: "H" },
   { href: "/config", label: "Config", mark: "C" },
-  { href: "/saved-configs", label: "Saved configs", mark: "A" },
   { href: "/logs", label: "Logs", mark: "L" },
   { href: "/settings", label: "Settings", mark: "S" },
 ];
