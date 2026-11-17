@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+CONTROL=/opt/warp-manager/control/warp-config-manager
+REQUEST="$CONTROL/request.json"
+RESULT="$CONTROL/result.json"
+
+if [ ! -f "$REQUEST" ] || [ -L "$REQUEST" ]; then exit 1; fi
+ID=$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([a-f0-9]\{32\}\)".*/\1/p' "$REQUEST" | head -n 1)
+ACTION=$(sed -n 's/.*"action"[[:space:]]*:[[:space:]]*"\([a-z-]*\)".*/\1/p' "$REQUEST" | head -n 1)
+EXPECTED_KEY=$(sed -n 's/.*"expected_public_key"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9+/=]*\)".*/\1/p' "$REQUEST" | head -n 1)
+case "$ID" in ''|*[!a-f0-9]*) exit 1 ;; esac
+[ "$ACTION" = probe-tunnel-ip ] || exit 1
+case "$EXPECTED_KEY" in *[!A-Za-z0-9+/=]*) exit 1 ;; esac
+
+ok=true
+message=ok
+ip=""
+config_loaded=null
+if [ -n "$EXPECTED_KEY" ]; then config_loaded=false; fi
+
+value=$(docker exec qbittorrentvpn curl --fail --silent --show-error --max-time 10 https://api.ipify.org 2>/dev/null || true)
+case "$value" in ''|*[!0-9a-fA-F:.]*) value="" ;; esac
+ip="$value"
+if [ -z "$ip" ]; then
+  ok=false
+  message=tunnel-ip-check-failed
+fi
+
+if [ "$ok" = true ] && [ -n "$EXPECTED_KEY" ]; then
+  interfaces=$(docker exec qbittorrentvpn wg show interfaces 2>/dev/null || true)
+  for interface in $interfaces; do
+    public_key=$(docker exec qbittorrentvpn wg show "$interface" public-key 2>/dev/null || true)
+    if [ "$public_key" = "$EXPECTED_KEY" ]; then
+      config_loaded=true
+      break
+    fi
+  done
+  if [ "$config_loaded" = false ]; then message=generated-config-not-active; fi
+fi
+
+umask 077
+tmp=$(mktemp "$CONTROL/.result.XXXXXX")
+printf '{"id":"%s","ok":%s,"message":"%s","ip":"%s","config_loaded":%s,"finished_at":"%s"}\n' "$ID" "$ok" "$message" "$ip" "$config_loaded" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+chmod 0600 "$tmp"
+mv -f "$tmp" "$RESULT"

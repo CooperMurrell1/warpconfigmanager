@@ -1,2 +1,88 @@
-# warpconfigmanager
-meow
+# WARP Config Manager
+
+A single Docker container for the scheduled WARP config generator, SQLite state, and a responsive Next.js / Chakra UI dashboard. Jellyfin authenticates the dashboard. Add the service fragment to the existing Portainer jellyfin stack; this repository does not create a second stack.
+
+## Generator behavior
+
+The image downloads scripts/warp-register.sh from the pinned upstream commit d4616f154d654d5c159c193432159240c96614bb. The script is used as provided. The app strips WARP_* variables from its child environment and invokes the script with its built-in defaults. It suppresses generator stderr because the upstream script can print API responses, tokens, and license information there.
+
+The defaults in the pinned script include Cloudflare DNS, MTU 1280, full-tunnel Allowed IPs 0.0.0.0/0 and ::/0, no listen port, no persistent keepalive, Linux device type, en_US locale, and the current UTC terms date. The web UI does not edit WireGuard settings. It lets a Jellyfin administrator edit the update interval and the manager's config filename. The interval defaults to 24 hours and both settings persist in SQLite.
+
+The optional WARP+ license is read from /opt/warp-manager/data/warp_license. Leave it absent or empty for the upstream default registration. If using WARP+, create that file with root ownership and mode 0600, and never commit it.
+
+To update the upstream pin, review the [pinned script](https://github.com/lanrat/wireguard-warp-generator/blob/d4616f154d654d5c159c193432159240c96614bb/scripts/warp-register.sh) and [pinned script README](https://github.com/lanrat/wireguard-warp-generator/blob/d4616f154d654d5c159c193432159240c96614bb/scripts/README.md), inspect changes at a new full commit SHA, update WARP_GENERATOR_COMMIT in the Dockerfile, and rebuild. Do not track a moving branch.
+
+## Existing VPN stack
+
+Portainer inspection found a jellyfin stack with qbittorrentvpn using the custom WireGuard client and /opt/wireguard mounted at /config/wireguard. Prowlarr, Radarr, Sonarr, and FlareSolverr share the VPN container's network namespace. Jellyfin is on jellyfin_default; Nginx Proxy Manager uses nginx-proxy-manager_default.
+
+The manager joins the existing jellyfin default network for Jellyfin authentication and the existing NPM network for reverse proxy access. It does not join the VPN namespace. A probe-only host helper checks the public IP from inside qbittorrentvpn and compares the loaded WireGuard interface key with the selected config. The manager container has no Docker socket.
+
+The default managed file is /config/wireguard/wg0.conf. The filename can be changed in the UI and is saved in SQLite. A new filename can only be selected if that existing file already contains a usable WireGuard config. Changing this setting does not rename or copy files and does not change the VPN container's config path. Before selecting another name, make sure the VPN container is configured to load it. After selection, future generated files are installed at that filename.
+
+**Routing warning:** the upstream default Allowed IPs send all IPv4 and IPv6 traffic in the qbittorrentvpn network namespace through WARP. This changes the exit IP and routing for qBittorrent, Prowlarr, Radarr, Sonarr, and FlareSolverr. It may also affect region access, inbound connections, and firewall behavior. Jellyfin and Seerr stay on their current routes. This behavior has not been verified on the deployed host.
+
+Portainer showed LAN_NETWORK=192.168.1.0/24,172.20.0.0/16, while jellyfin_default was 172.19.0.0/16. Check this existing subnet mismatch and keep the actual LAN subnet in the VPN container's LAN settings.
+
+## One-time host setup
+
+The host setup script creates only missing directories and installs only missing helper files. It checks paths first, keeps matching files unchanged, and stops if it finds a conflicting file or an existing directory with unexpected ownership or permissions. It does not overwrite or delete existing host files. It also refuses to create /opt/wireguard; that directory must already exist for the current VPN stack.
+
+From a checkout of this repository on the Docker host, run:
+
+~~~sh
+sudo sh ./host-setup.sh
+~~~
+
+This creates persistent app directories, installs a root-run probe-only systemd path service, and enables it. It does not restart containers. The helper has only fixed Docker CLI probe operations against qbittorrentvpn; it does not expose the Docker socket to the app.
+
+The container creates /opt/warp-manager/data/session_secret only if it is missing. It never replaces an existing key. The same persistent data directory holds SQLite state and the optional WARP+ license file. Keep this directory root-owned and mode 0755. The setup script expects host group ID 1000 for the image's node process.
+
+If /opt/warp-manager/data, /opt/warp-manager/control, /opt/warp-manager/ui-commands, or /opt/wireguard already exists with different permissions, setup stops and leaves it unchanged. Review and correct permissions manually if you want to proceed.
+
+## Add one service to the existing Portainer stack
+
+The Compose fragment has no runtime environment variables and uses long bind mounts with create_host_path disabled, so Docker will not silently create missing host paths.
+
+A GitHub Actions workflow builds and pushes ghcr.io/coopermurrell1/warpconfigmanager:latest after changes land on main. If the repository/package is private, configure Portainer's GHCR registry credentials with a GitHub token that has read:packages. Keep that token in Portainer only.
+
+1. Wait for the image workflow to publish successfully.
+2. In Portainer, edit the existing Stacks → jellyfin stack.
+3. Add the service from compose.fragment.yaml under the existing services map. Merge the nginx-proxy-manager external network into the existing top-level networks map.
+4. Update the existing jellyfin stack. This adds one container to that stack.
+5. In Nginx Proxy Manager, add a Proxy Host pointing to warp-config-manager port 3000, assign a trusted HTTPS certificate, enable forced SSL, and restrict access as preferred. The service publishes no host port.
+
+The host setup script and the stack service are separate one-time steps. After both are done, the container initializes SQLite, creates its session key if absent, validates the existing config, skips generation when the config is usable, and schedules updates automatically.
+
+## Applying an update
+
+The updater installs a validated config atomically with mode 0600 and saves the previous usable file as *.last-good. Failed generation or validation leaves the active config untouched. The update history records each attempt and a safe error summary.
+
+Per your request, the manager has no restart or reload action and does not restart any container or stack. After a new config is installed, the dashboard marks it as pending manual activation until the probe sees the matching WireGuard interface key. Apply the file manually in Portainer when ready. The displayed public IP is always probed from the currently running qBittorrentVPN tunnel; while an update is pending, it may still show the old tunnel IP.
+
+## Sign-in and state
+
+Sign in with a Jellyfin administrator account to change the schedule, config filename, or request an update. The password is sent to Jellyfin's internal Users/AuthenticateByName API at http://jellyfin:8096 and is not stored. The Jellyfin access token is kept only in an encrypted, HTTP-only, Secure, 12-hour cookie. Logout asks Jellyfin to revoke it. CSRF and same-origin checks protect state-changing requests. HTTPS is required because the cookie is Secure.
+
+SQLite stores the interval, selected config filename, update status, history, and recent logs. The API and logs never contain WireGuard private or preshared keys, the WARP+ license, Jellyfin tokens, or full config contents.
+
+## Backup and recovery
+
+Stop the manager before copying SQLite so WAL state is included. Back up securely:
+
+- /opt/wireguard/wg0.conf (or the selected filename) and its .last-good copy
+- /opt/warp-manager/data/state.sqlite3
+- /opt/warp-manager/data/session_secret
+- /opt/warp-manager/data/warp_license if present
+
+To recover, restore those files and permissions, then start the existing jellyfin stack. A usable config is reused. If the session key is not restored, Jellyfin users will need to sign in again.
+
+## Troubleshooting
+
+- If Portainer cannot pull the image, check GHCR read:packages registry credentials.
+- If the manager exits during startup, check the required host directories exist and match the documented ownership and permissions.
+- If Jellyfin login fails, confirm the manager and Jellyfin share jellyfin_default and Jellyfin is reachable at http://jellyfin:8096.
+- If NPM cannot reach the dashboard, confirm both containers use nginx-proxy-manager_default and the proxy target is warp-config-manager:3000.
+- If the public IP is unavailable, check systemctl status warp-vpn-probe.path warp-vpn-probe.service, confirm the Docker CLI can inspect and exec into qbittorrentvpn, and verify curl is present in that container.
+- If the dashboard says the config is not active, confirm that qbittorrentvpn loads the selected filename, then manually restart the VPN-dependent services in Portainer.
+- The tunnel and public-IP behavior has not been verified in this environment.

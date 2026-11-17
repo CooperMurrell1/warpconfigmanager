@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for a tunnel IP probe request from WARP Config Manager
+
+[Path]
+PathChanged=/opt/warp-manager/control/warp-config-manager/request.json
+Unit=warp-vpn-probe.service
+
+[Install]
+WantedBy=multi-user.target

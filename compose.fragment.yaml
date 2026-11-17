@@ -1,0 +1,58 @@
+services:
+  # Add this one service to the existing Portainer jellyfin stack.
+  warp-config-manager:
+    image: ghcr.io/coopermurrell1/warpconfigmanager:latest
+    container_name: warp-config-manager
+    depends_on:
+      qbittorrentvpn:
+        condition: service_started
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /app/.next/cache:size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: /opt/wireguard
+        target: /config/wireguard
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/warp-manager/data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/warp-manager/control
+        target: /control
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/warp-manager/ui-commands/warp-config-manager
+        target: /ui-commands
+        bind:
+          create_host_path: false
+    networks:
+      - default
+      - nginx-proxy-manager
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 4s
+      start_period: 45s
+      retries: 3
+
+# Merge this external network into the existing top-level networks section.
+networks:
+  nginx-proxy-manager:
+    external: true
+    name: nginx-proxy-manager_default

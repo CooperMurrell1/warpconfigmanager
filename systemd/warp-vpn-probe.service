@@ -1,0 +1,14 @@
+[Unit]
+Description=Probe the active qBittorrentVPN tunnel and loaded WireGuard config
+
+[Service]
+Type=oneshot
+TimeoutStartSec=30
+User=root
+Group=root
+ExecStart=/usr/local/sbin/warp-vpn-probe
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/warp-manager/control/warp-config-manager
