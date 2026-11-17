@@ -57,6 +57,7 @@ HOST_ERROR_MESSAGES = {
     "vpn-container-restart-failed": "Could not restart the qBittorrentVPN container. Check the Docker service logs.",
     "vpn-container-not-ready": "The qBittorrentVPN container did not start successfully.",
     "dependent-container-restart-failed": "The VPN restarted, but one or more routed containers could not be restarted. Check the Docker service logs.",
+    "no-routed-containers-found": "The VPN restarted, but Docker did not find any containers sharing its network namespace. Check each routed service's network_mode setting and the host helper version.",
     "generated-config-not-active": "The VPN restarted, but the selected WireGuard config did not become active.",
 }
 
@@ -735,6 +736,8 @@ def host_request(action, expected_public_key=None):
                     if result.get("message"):
                         result["message"] = friendly_host_message(result["message"])
                     if result.get("ok"):
+                        if action == "activate-config" and not isinstance(result.get("dependent_count"), int):
+                            log_event("warning", "The installed host VPN helper did not report routed-container discovery; update it with host-setup.sh")
                         return result
                     raise RuntimeError(result.get("message", "The host VPN manager could not complete the request."))
             except (OSError, ValueError):
@@ -817,7 +820,7 @@ def _run_update_locked(source, config_name=None):
         archive_config(candidate, account_info=account, display_name=config_name, automatic=source in ("scheduled", "startup"))
         add_run_detail("Generation completed successfully")
         add_generator_log(started, source, "success", STATE.get("_generator_details", []), completed)
-        log_event("info", "New config installed and activated; restarted %d VPN-scoped container(s)" % int(activation.get("restarted_count", 1)), "config")
+        log_event("info", "New config installed and activated; restarted %d container(s), including %d routed dependents" % (int(activation.get("restarted_count", 1)), int(activation.get("dependent_count", 0))), "config")
         return True
     except Exception as exc:
         if isinstance(exc, (RuntimeError, ValueError)) and str(exc):

@@ -18,6 +18,7 @@ message=ok
 ip=""
 config_loaded=null
 restarted_count=0
+dependent_count=0
 if [ -n "$EXPECTED_KEY" ]; then config_loaded=false; fi
 
 probe_ip() {
@@ -87,6 +88,7 @@ elif [ "$ACTION" = activate-config ]; then
           namespace_id=$(docker inspect --format '{{.Id}}' "$namespace_ref" 2>/dev/null || true)
           if [ "$namespace_id" = "$vpn_id" ]; then
             dependents="$dependents $container"
+            dependent_count=$((dependent_count + 1))
           fi
           ;;
       esac
@@ -102,6 +104,10 @@ elif [ "$ACTION" = activate-config ]; then
         ok=false
         message=vpn-container-not-ready
       else
+        if [ "$dependent_count" -eq 0 ]; then
+          ok=false
+          message=no-routed-containers-found
+        fi
         restart_pids=""
         for container in $dependents; do
           (dependent_running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)
@@ -159,7 +165,7 @@ fi
 
 umask 077
 tmp=$(mktemp "$CONTROL/.result.XXXXXX")
-printf '{"id":"%s","ok":%s,"message":"%s","ip":"%s","config_loaded":%s,"restarted_count":%s,"finished_at":"%s"}\n' \
-  "$ID" "$ok" "$message" "$ip" "$config_loaded" "$restarted_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+printf '{"id":"%s","ok":%s,"message":"%s","ip":"%s","config_loaded":%s,"restarted_count":%s,"dependent_count":%s,"finished_at":"%s"}\n' \
+  "$ID" "$ok" "$message" "$ip" "$config_loaded" "$restarted_count" "$dependent_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
 chmod 0600 "$tmp"
 mv -f "$tmp" "$RESULT"
