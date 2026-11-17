@@ -34,8 +34,8 @@ export default function LogsPage() {
       type: item.category === "config" || item.category === "generator" ? item.category : "service",
       at: item.at,
       result: item.level,
-      title: item.message,
-      details: [item.message],
+      title: item.message.split(/\r?\n/, 1)[0],
+      details: item.message.split(/\r?\n/).slice(1).filter(Boolean),
       download: `/api/logs/download?kind=event&id=${item.id}`,
     }));
     const query = search.trim().toLocaleLowerCase();

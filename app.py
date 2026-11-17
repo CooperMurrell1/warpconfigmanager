@@ -105,7 +105,8 @@ def install_active_config(content, reason):
         "WARP account expires: %s" % (account.get("expires_at") or "unavailable"),
         "Sensitive values omitted: private key, registration token, and license data.",
     ]
-    log_event("info", "Active config changed: %s\n%s" % (STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), "\n".join(details)), "config")
+    timestamped_details = ["%s — %s" % (now(), line) for line in details]
+    log_event("success", "Active config changed: %s\n%s" % (STATE.get("config_filename", DEFAULT_CONFIG_FILENAME), "\n".join(timestamped_details)), "config")
 
 
 def db_connect():
