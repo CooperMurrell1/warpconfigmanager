@@ -171,11 +171,13 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS manager_state (id INTEGER PRIMARY KEY CHECK(id=1), state_json TEXT NOT NULL)")
         conn.execute("CREATE TABLE IF NOT EXISTS update_history (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, result TEXT NOT NULL, source TEXT NOT NULL, error TEXT, duration_seconds REAL NOT NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_update_history_finished ON update_history(id DESC)")
-        conn.execute("CREATE TABLE IF NOT EXISTS service_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'service')")
+        conn.execute("CREATE TABLE IF NOT EXISTS service_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'service', details TEXT NOT NULL DEFAULT '[]')")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_service_logs_id ON service_logs(id DESC)")
         service_columns = {row["name"] for row in conn.execute("PRAGMA table_info(service_logs)").fetchall()}
         if "category" not in service_columns:
             conn.execute("ALTER TABLE service_logs ADD COLUMN category TEXT NOT NULL DEFAULT 'service'")
+        if "details" not in service_columns:
+            conn.execute("ALTER TABLE service_logs ADD COLUMN details TEXT NOT NULL DEFAULT '[]'")
         conn.execute("CREATE TABLE IF NOT EXISTS generator_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, source TEXT NOT NULL, result TEXT NOT NULL, details TEXT NOT NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_generator_logs_id ON generator_logs(id DESC)")
         conn.execute("CREATE TABLE IF NOT EXISTS saved_configs (id TEXT PRIMARY KEY, filename TEXT NOT NULL, name TEXT NOT NULL DEFAULT 'Untitled Config', saved_at TEXT NOT NULL, expires_at TEXT NOT NULL, sha256 TEXT UNIQUE NOT NULL, address TEXT NOT NULL, endpoint TEXT NOT NULL, account_type TEXT, account_id TEXT, device_id TEXT, account_created_at TEXT, account_expires_at TEXT, interface_public_key TEXT, dns TEXT, mtu INTEGER, allowed_ips TEXT, keepalive INTEGER, last_status TEXT NOT NULL DEFAULT 'success', status_at TEXT)")
@@ -415,7 +417,12 @@ def load_state():
             except (ValueError, TypeError):
                 pass
         state["history"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,result,source,error,duration_seconds FROM update_history ORDER BY id DESC LIMIT 100").fetchall()][::-1]
-        state["logs"] = [dict(r) for r in conn.execute("SELECT id,at,level,message,category FROM service_logs ORDER BY id DESC LIMIT 200").fetchall()][::-1]
+        state["logs"] = [dict(r) for r in conn.execute("SELECT id,at,level,message,category,details FROM service_logs ORDER BY id DESC LIMIT 200").fetchall()][::-1]
+        for log in state["logs"]:
+            try:
+                log["details"] = json.loads(log.get("details") or "[]")
+            except (ValueError, TypeError):
+                log["details"] = []
         state["generator_logs"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,source,result,details FROM generator_logs ORDER BY id DESC LIMIT 100").fetchall()][::-1]
         state["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,name,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,address,endpoint,dns,mtu,allowed_ips,keepalive,last_status,status_at FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
     if isinstance(state.get("ip"), dict) and state["ip"].get("error"):
@@ -445,15 +452,25 @@ def load_state():
     return state
 
 
-def log_event(level, message, category="service"):
+def log_event(level, message, category="service", details=None):
     if category not in ("service", "config", "generator"):
         category = "service"
-    entry = {"at": now(), "level": level, "message": message, "category": category}
+    timestamp = now()
+    all_message_lines = [line.strip() for line in str(message).splitlines() if line.strip()]
+    message_lines = all_message_lines[1:]
+    if details is None:
+        details = message_lines or ["Type: %s" % category.capitalize(), "Severity: %s" % level, "Recorded at: %s" % timestamp, "Event: %s" % (all_message_lines[0] if all_message_lines else "No message was recorded.")]
+    if not isinstance(details, list):
+        details = [str(details)]
+    details = [str(line)[:1000] for line in details if line is not None]
+    if len(all_message_lines) <= 1 and details:
+        message = str(message) + "\n" + "\n".join(details)
+    entry = {"at": timestamp, "level": level, "message": message, "category": category, "details": details}
     with STATE_LOCK:
         STATE["logs"].append(entry)
         STATE["logs"] = STATE["logs"][-200:]
         with db_session() as conn:
-            cursor = conn.execute("INSERT INTO service_logs(at,level,message,category) VALUES(?,?,?,?)", (entry["at"], level, message, category))
+            cursor = conn.execute("INSERT INTO service_logs(at,level,message,category,details) VALUES(?,?,?,?,?)", (entry["at"], level, message, category, json.dumps(details, ensure_ascii=True)))
             entry["id"] = cursor.lastrowid
             conn.execute("DELETE FROM service_logs WHERE id NOT IN (SELECT id FROM service_logs ORDER BY id DESC LIMIT 200)")
             conn.commit()
@@ -737,13 +754,27 @@ def host_request(action, expected_public_key=None):
                         result["message"] = friendly_host_message(result["message"])
                     if action == "activate-config" and isinstance(result.get("dependent_count"), int):
                         dependent_ids = [value for value in result.get("dependent_ids", "").split(",") if re.fullmatch(r"[a-f0-9]{64}", value)]
-                        summary = "Host restart summary: matched %d routed container(s); restarted or started %d total container(s); dependent restart failures=%d; container IDs=%s." % (result["dependent_count"], int(result.get("restarted_count", 0)), int(result.get("dependent_failed_count", 0)), ",".join(dependent_ids) or "none")
-                        log_event("info" if result.get("ok") else "warning", summary, "config")
+                        dependent_failed = int(result.get("dependent_failed_count", 0))
+                        restarted_total = int(result.get("restarted_count", 0))
+                        summary = "Host restart summary: matched %d routed container(s); restarted or started %d total container(s); dependent restart failures=%d; container IDs=%s." % (result["dependent_count"], restarted_total, dependent_failed, ",".join(dependent_ids) or "none")
+                        diagnostic_details = [
+                            "Operation: activate VPN config",
+                            "Host helper result: %s" % ("success" if result.get("ok") else "failed"),
+                            "Config loaded by VPN: %s" % ("yes" if result.get("config_loaded") else "no"),
+                            "VPN and dependent containers restarted or started: %d" % restarted_total,
+                            "Routed dependents discovered: %d" % result["dependent_count"],
+                            "Dependent restart failures: %d" % dependent_failed,
+                            "Discovered container IDs: %s" % (", ".join(dependent_ids) or "none"),
+                            "Host helper message: %s" % str(result.get("message") or "No message returned")[:500],
+                            "Discovery matches containers sharing the VPN container network namespace.",
+                            "Host journal: journalctl -u warp-vpn-manager.service",
+                        ]
+                        log_event("info" if result.get("ok") and not dependent_failed else "warning", summary, "config", diagnostic_details)
                         details = STATE.get("_generator_details")
                         if isinstance(details, list):
                             timestamp = now()
                             details.append(timestamp + " — " + summary)
-                            details.extend(timestamp + " — Routed container ID: " + value for value in dependent_ids)
+                            details.extend(timestamp + " — " + line for line in diagnostic_details)
                     if result.get("ok"):
                         if action == "activate-config" and not isinstance(result.get("dependent_count"), int):
                             log_event("warning", "The installed host VPN helper did not report routed-container discovery; update it with host-setup.sh")
