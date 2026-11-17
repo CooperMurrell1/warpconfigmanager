@@ -176,12 +176,42 @@ compose_force_recreate_service() {
   done
   log "recreating Compose service $compose_project/$cfr_service from its source config"
   if docker compose version >/dev/null 2>&1; then
-    docker compose --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service" >/dev/null 2>&1
+    if docker compose --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service"; then
+      :
+    else
+      cfr_status=$?
+      log "docker compose up failed for $compose_project/$cfr_service with exit code $cfr_status"
+      return 1
+    fi
   elif command -v docker-compose >/dev/null 2>&1; then
-    docker-compose --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service" >/dev/null 2>&1
+    if docker-compose --project-directory "$cfr_project_dir" "$@" up --detach --no-deps --force-recreate --no-build "$cfr_service"; then
+      :
+    else
+      cfr_status=$?
+      log "docker-compose up failed for $compose_project/$cfr_service with exit code $cfr_status"
+      return 1
+    fi
   else
     return 1
   fi
+
+  cfr_ids=$(docker ps --all --quiet --no-trunc \
+    --filter "label=com.docker.compose.project=$compose_project" \
+    --filter "label=com.docker.compose.service=$cfr_service")
+  [ -n "$cfr_ids" ] || {
+    log "Compose reported success but no containers exist for $compose_project/$cfr_service"
+    return 1
+  }
+  cfr_failed=false
+  for cfr_id in $cfr_ids; do
+    cfr_running=$(docker inspect --format '{{.State.Running}}' "$cfr_id" 2>/dev/null || true)
+    cfr_mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$cfr_id" 2>/dev/null || true)
+    cfr_namespace_id=""
+    case "$cfr_mode" in container:*) cfr_namespace_id=$(docker inspect --format '{{.Id}}' "${cfr_mode#container:}" 2>/dev/null || true) ;; esac
+    log "post-recreate check service=$compose_project/$cfr_service id=$cfr_id running=$cfr_running network_mode=${cfr_mode:-unavailable} namespace_id=${cfr_namespace_id:-unresolved} expected_vpn_id=$vpn_id"
+    if [ "$cfr_running" != true ] || [ "$cfr_namespace_id" != "$vpn_id" ]; then cfr_failed=true; fi
+  done
+  [ "$cfr_failed" = false ]
 }
 
 running=$(docker inspect --format '{{.State.Running}}' qbittorrentvpn 2>/dev/null || true)
