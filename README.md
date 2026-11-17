@@ -28,7 +28,7 @@ Portainer showed LAN_NETWORK=192.168.1.0/24,172.20.0.0/16, while jellyfin_defaul
 
 ## One-time host setup
 
-The host setup script creates only missing directories and installs only missing helper files. It checks paths first, keeps matching files unchanged, and stops if it finds a conflicting file or an existing directory with unexpected ownership or permissions. It does not overwrite or delete existing host files. It also refuses to create /opt/wireguard; that directory must already exist for the current VPN stack.
+The host setup script creates only missing manager directories and installs or safely updates root-owned helper files. It checks paths first and stops if it finds conflicting manager paths. It does not overwrite or delete unrelated host files. It does not create or change ownership or permissions on `/opt/wireguard`; that directory must already exist for the current VPN stack.
 
 From a checkout of this repository on the Docker host, run:
 
@@ -42,7 +42,7 @@ The manager unit uses versioned `warp-vpn-manager` filenames and a separate cont
 
 The container creates /opt/warp-manager/data/session_secret only if it is missing. It never replaces an existing key. The same persistent data directory holds SQLite state and the optional WARP+ license file. Keep this directory root-owned and mode 0755. The setup script expects host group ID 1000 for the image's node process.
 
-If /opt/warp-manager/data, /opt/warp-manager/control, /opt/warp-manager/ui-commands, or /opt/wireguard already exists with different permissions, setup stops and leaves it unchanged. Review and correct permissions manually if you want to proceed.
+If a manager data/control directory already exists with unexpected permissions, setup stops and leaves it unchanged. `/opt/wireguard` ownership and permissions are left as configured by the VPN stack.
 
 ## Add one service to the existing Portainer stack
 

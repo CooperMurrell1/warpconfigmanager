@@ -57,12 +57,6 @@ install_new_or_identical() {
 
 [ ! -L /opt/wireguard ] || fail "/opt/wireguard is a symlink; it was left untouched"
 [ -d /opt/wireguard ] || fail "/opt/wireguard does not exist; this setup will not create or modify the VPN config directory"
-[ "$(stat -c '%u' /opt/wireguard)" = 0 ] || fail "/opt/wireguard must be root-owned so the manager can atomically install configs; it was left untouched"
-wireguard_mode=$(stat -c '%a' /opt/wireguard)
-case "$wireguard_mode" in
-  700|750|755|770) ;;
-  *) fail "/opt/wireguard needs owner write and execute permissions; it was left untouched" ;;
-esac
 
 command -v docker >/dev/null 2>&1 || fail "Docker CLI is required"
 command -v systemctl >/dev/null 2>&1 || fail "systemd is required"

@@ -46,6 +46,31 @@ def now():
     return dt.datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+HOST_ERROR_MESSAGES = {
+    "ok": "The operation completed successfully.",
+    "config-activated": "The selected config is active in the VPN tunnel.",
+    "vpn-probe-tool-missing": "The VPN container needs curl or wget installed to check its public IP.",
+    "tunnel-ip-probe-invalid-response": "The public IP check returned an invalid address. Check the VPN tunnel and try again.",
+    "tunnel-ip-probe-command-failed": "Could not reach the public IP check through the VPN tunnel.",
+    "vpn-container-not-running": "The qBittorrentVPN container is not running.",
+    "vpn-container-metadata-unavailable": "Could not read the qBittorrentVPN container details from Docker.",
+    "vpn-container-restart-failed": "Could not restart the qBittorrentVPN container. Check the Docker service logs.",
+    "vpn-container-not-ready": "The qBittorrentVPN container did not start successfully.",
+    "dependent-container-restart-failed": "The VPN restarted, but one or more routed containers could not be restarted. Check the Docker service logs.",
+    "generated-config-not-active": "The VPN restarted, but the selected WireGuard config did not become active.",
+}
+
+
+def friendly_host_message(message):
+    if not isinstance(message, str) or not message:
+        return "The host VPN manager returned an unknown response."
+    if message in HOST_ERROR_MESSAGES:
+        return HOST_ERROR_MESSAGES[message]
+    if re.fullmatch(r"[a-z]+(?:-[a-z]+)+", message):
+        return message.replace("-", " ").capitalize() + "."
+    return message
+
+
 def validate_config_filename(value):
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}\.conf", value):
         raise ValueError("Filename must be a simple .conf filename without directories")
@@ -392,6 +417,15 @@ def load_state():
         state["logs"] = [dict(r) for r in conn.execute("SELECT id,at,level,message,category FROM service_logs ORDER BY id DESC LIMIT 200").fetchall()][::-1]
         state["generator_logs"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,source,result,details FROM generator_logs ORDER BY id DESC LIMIT 100").fetchall()][::-1]
         state["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,name,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,address,endpoint,dns,mtu,allowed_ips,keepalive,last_status,status_at FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
+    if isinstance(state.get("ip"), dict) and state["ip"].get("error"):
+        state["ip"]["error"] = friendly_host_message(state["ip"]["error"])
+    if state.get("last_error"):
+        state["last_error"] = friendly_host_message(state["last_error"])
+    for entry in state["logs"]:
+        entry["message"] = friendly_host_message(entry.get("message"))
+    for entry in state["history"]:
+        if entry.get("error"):
+            entry["error"] = friendly_host_message(entry["error"])
     state["interval_seconds"] = max(MIN_INTERVAL, min(MAX_INTERVAL, int(state.get("interval_seconds", INTERVAL_DEFAULT))))
     try:
         state["config_retention_seconds"] = max(3600, min(365 * 86400, int(state.get("config_retention_seconds", 30 * 86400))))
@@ -698,9 +732,11 @@ def host_request(action, expected_public_key=None):
             try:
                 result = json.loads(HOST_RESULT.read_text(encoding="utf-8"))
                 if result.get("id") == request_id:
+                    if result.get("message"):
+                        result["message"] = friendly_host_message(result["message"])
                     if result.get("ok"):
                         return result
-                    raise RuntimeError(result.get("message", "Host helper failed"))
+                    raise RuntimeError(result.get("message", "The host VPN manager could not complete the request."))
             except (OSError, ValueError):
                 pass
             time.sleep(1)
