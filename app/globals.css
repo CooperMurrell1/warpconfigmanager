@@ -1,0 +1,55 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background:
+    radial-gradient(circle at 82% 4%, rgba(34, 211, 238, 0.11), transparent 30rem),
+    radial-gradient(circle at 14% 88%, rgba(139, 92, 246, 0.12), transparent 34rem),
+    #070b14;
+}
+
+@keyframes welcome-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes avatar-pulse {
+  0% { transform: scale(0.78); opacity: 0; box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
+  45% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 18px rgba(34, 211, 238, 0.08); }
+  100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
+}
+
+@keyframes welcome-shimmer {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(220%); }
+}
+
+.welcome-card {
+  animation: welcome-in 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.welcome-avatar {
+  animation: avatar-pulse 760ms cubic-bezier(0.2, 0.8, 0.2, 1) 120ms both;
+}
+
+.welcome-progress::after {
+  animation: welcome-shimmer 1.35s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-card,
+  .welcome-avatar,
+  .welcome-progress::after {
+    animation: none;
+  }
+}

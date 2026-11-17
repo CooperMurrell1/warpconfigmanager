@@ -1,4 +1,5 @@
 import { Providers } from "@/components/providers";
+import "./globals.css";
 
 export const metadata = {
   title: "WARP Config Manager",
@@ -8,9 +9,10 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0 }}>
+      <body style={{ margin: 0, background: "#070b14", color: "#f7fafc" }}>
         <Providers>{children}</Providers>
       </body>
     </html>
   );
 }
+
