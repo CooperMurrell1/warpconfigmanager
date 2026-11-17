@@ -1,69 +1,105 @@
 "use client";
 
-import { Alert, Box, Button, Field, Heading, Input, SimpleGrid, Stack, Text } from "@chakra-ui/react";
+import { Alert, Box, Button, Dialog, Field, Heading, Input, Portal, SimpleGrid, Stack, Text } from "@chakra-ui/react";
 import { useEffect, useState } from "react";
 import { useDashboard } from "@/components/dashboard-context";
 import { GlassCard, PageHeader } from "@/components/dashboard-ui";
 
+const intervalUnits = { hours: 3600, days: 86400, weeks: 604800 };
+
+function intervalDisplay(seconds) {
+  if (seconds % intervalUnits.weeks === 0) return { value: String(seconds / intervalUnits.weeks), unit: "weeks" };
+  if (seconds % intervalUnits.days === 0) return { value: String(seconds / intervalUnits.days), unit: "days" };
+  return { value: String(seconds / intervalUnits.hours), unit: "hours" };
+}
+
 export default function SettingsPage() {
   const { state, busy, post } = useDashboard();
-  const [hours, setHours] = useState("24");
+  const [intervalValue, setIntervalValue] = useState("24");
+  const [intervalUnit, setIntervalUnit] = useState("hours");
   const [filename, setFilename] = useState("wg0.conf");
+  const [filenameEditing, setFilenameEditing] = useState(false);
+  const [confirmFilenameOpen, setConfirmFilenameOpen] = useState(false);
   const [warpSettings, setWarpSettings] = useState({ device_type: "Linux", locale: "en_US", device_name: "", device_model: "" });
   const admin = state?.current_user_is_admin === true;
 
   useEffect(() => {
     if (!state) return;
-    if (document.activeElement?.id !== "interval-hours") setHours(String(state.interval_seconds / 3600));
-    if (document.activeElement?.id !== "config-filename") setFilename(state.config_filename || "wg0.conf");
+    const focusedId = document.activeElement?.id;
+    if (focusedId !== "interval-value" && focusedId !== "interval-unit") {
+      const display = intervalDisplay(state.interval_seconds);
+      setIntervalValue(display.value);
+      setIntervalUnit(display.unit);
+    }
+    if (!filenameEditing) setFilename(state.config_filename || "wg0.conf");
     if (!document.activeElement?.closest("#warp-settings-form") && state.warp_settings) setWarpSettings(state.warp_settings);
-  }, [state]);
+  }, [state, filenameEditing]);
 
-  const intervalSeconds = Math.round(Number(hours) * 3600);
+  const intervalSeconds = Math.round(Number(intervalValue) * intervalUnits[intervalUnit]);
   const intervalValid = Number.isFinite(intervalSeconds) && intervalSeconds >= 300 && intervalSeconds <= 7776000;
+
+  async function confirmFilenameChange() {
+    const saved = await post("/api/config-file", { config_filename: filename.trim() }, "Configuration file updated.");
+    if (saved) {
+      setConfirmFilenameOpen(false);
+      setFilenameEditing(false);
+    }
+  }
 
   return (
     <>
-      <PageHeader eyebrow="Preferences" title="Settings" description="Only operational settings that do not alter the generated WireGuard values are available here. Changes are persisted in SQLite." />
+      <PageHeader eyebrow="Preferences" title="Settings" description="Choose when your config refreshes and how this device appears in WARP." />
 
       <SimpleGrid columns={{ base: 1, xl: 2 }} gap="5">
         <GlassCard p={{ base: "5", md: "7" }}>
-          <Heading color="gray.50" size="md" mb="2">Generation schedule</Heading>
-          <Text color="gray.400" fontSize="sm" mb="6">Choose how often the manager checks in and generates a fresh configuration.</Text>
+          <Heading color="gray.50" size="md" mb="2">Update schedule</Heading>
+          <Text color="gray.400" fontSize="sm" mb="6">Choose how often to create and apply a fresh configuration.</Text>
           <Stack gap="4">
-            <Field.Root invalid={hours !== "" && !intervalValid}>
-              <Field.Label color="gray.200">Interval in hours</Field.Label>
-              <Input id="interval-hours" type="number" min="0.0834" max="2160" step="any" value={hours} onChange={event => setHours(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" _placeholder={{ color: "gray.500" }} />
-              <Field.HelperText color="gray.400">Between 5 minutes and 90 days.</Field.HelperText>
-              <Field.ErrorText>Enter an interval between 5 minutes and 90 days.</Field.ErrorText>
+            <Field.Root invalid={!intervalValid}>
+              <Field.Label color="gray.200">Refresh every</Field.Label>
+              <Stack direction={{ base: "column", sm: "row" }} gap="3">
+                <Input id="interval-value" type="number" min="0.0001" step="any" value={intervalValue} onChange={event => setIntervalValue(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" _placeholder={{ color: "gray.500" }} />
+                <Box as="select" id="interval-unit" value={intervalUnit} onChange={event => setIntervalUnit(event.target.value)} aria-label="Refresh interval unit" minW="32" h="10" px="3" rounded="md" bg="rgba(2, 6, 23, 0.92)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50">
+                  <option value="hours">Hours</option>
+                  <option value="days">Days</option>
+                  <option value="weeks">Weeks</option>
+                </Box>
+              </Stack>
+              <Field.HelperText color="gray.400">Choose hours, days, or weeks. The allowed range is 5 minutes to 90 days.</Field.HelperText>
+              <Field.ErrorText>Enter a refresh interval between 5 minutes and 90 days.</Field.ErrorText>
             </Field.Root>
-            <Button alignSelf="start" bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={busy} disabled={!admin || !intervalValid} onClick={() => post("/api/interval", { interval_seconds: intervalSeconds }, "Update interval saved.")}>Save interval</Button>
+            <Button alignSelf="start" bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={busy} disabled={!admin || !intervalValid} onClick={() => post("/api/interval", { interval_seconds: intervalSeconds }, "Refresh schedule saved.")}>Save schedule</Button>
           </Stack>
         </GlassCard>
 
         <GlassCard p={{ base: "5", md: "7" }}>
-          <Heading color="gray.50" size="md" mb="2">Managed filename</Heading>
-          <Text color="gray.400" fontSize="sm" mb="6">The default and recommended filename is wg0.conf.</Text>
+          <Heading color="gray.50" size="md" mb="2">Configuration file</Heading>
+          <Text color="gray.400" fontSize="sm" mb="6">This is the file the manager updates for your VPN.</Text>
           <Stack gap="4">
             <Field.Root>
-              <Field.Label color="gray.200">WireGuard config filename</Field.Label>
-              <Input id="config-filename" value={filename} onChange={event => setFilename(event.target.value)} placeholder="wg0.conf" bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" _placeholder={{ color: "gray.500" }} />
-              <Field.HelperText color="gray.400">The selected file must already exist and contain a valid configuration before switching.</Field.HelperText>
+              <Field.Label color="gray.200">Managed filename</Field.Label>
+              <Input id="config-filename" value={filename} onChange={event => setFilename(event.target.value)} readOnly={!filenameEditing} placeholder="wg0.conf" bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" _readOnly={{ opacity: 0.82, cursor: "default" }} _placeholder={{ color: "gray.500" }} />
             </Field.Root>
-            <Alert.Root status="warning" rounded="xl" bg="rgba(120, 53, 15, 0.44)" color="orange.50"><Alert.Indicator /><Alert.Title>This changes the manager&apos;s target only. It does not change the VPN container&apos;s config path.</Alert.Title></Alert.Root>
-            <Button alignSelf="start" bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={busy} disabled={!admin || !filename.trim()} onClick={() => post("/api/config-file", { config_filename: filename.trim() }, "Config filename saved.")}>Save filename</Button>
+            {filenameEditing ? (
+              <Stack direction={{ base: "column", sm: "row" }} gap="3">
+                <Button variant="outline" color="gray.100" borderColor="gray.600" disabled={busy} onClick={() => { setFilename(state?.config_filename || "wg0.conf"); setFilenameEditing(false); }}>Cancel</Button>
+                <Button bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} disabled={!admin || !filename.trim() || busy} onClick={() => setConfirmFilenameOpen(true)}>Save filename</Button>
+              </Stack>
+            ) : (
+              <Button alignSelf="start" variant="outline" color="gray.100" borderColor="gray.600" disabled={!admin} onClick={() => setFilenameEditing(true)}>Edit filename</Button>
+            )}
           </Stack>
         </GlassCard>
       </SimpleGrid>
 
       <GlassCard id="warp-settings-form" p={{ base: "5", md: "7" }} mt="5">
-        <Heading color="gray.50" size="md" mb="2">WARP registration identity</Heading>
-        <Text color="gray.400" fontSize="sm" mb="6">Choose how this device identifies itself when it registers with WARP. These values are stored in the manager database and apply to the next config generation.</Text>
+        <Heading color="gray.50" size="md" mb="2">WARP device details</Heading>
+        <Text color="gray.400" fontSize="sm" mb="6">Choose the name and details shown for this device when it registers with WARP. Changes apply the next time a config is generated.</Text>
         <SimpleGrid columns={{ base: 1, md: 2 }} gap="5">
           <Field.Root>
             <Field.Label color="gray.200">Device type</Field.Label>
             <Input value={warpSettings.device_type} onChange={event => setWarpSettings({ ...warpSettings, device_type: event.target.value })} placeholder="Linux" maxLength={32} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
-            <Field.HelperText color="gray.400">Sent as the WARP registration type (default: Linux).</Field.HelperText>
+            <Field.HelperText color="gray.400">Default: Linux.</Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label color="gray.200">Locale</Field.Label>
@@ -79,13 +115,32 @@ export default function SettingsPage() {
             <Input value={warpSettings.device_model} onChange={event => setWarpSettings({ ...warpSettings, device_model: event.target.value })} placeholder="Optional" maxLength={64} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" />
           </Field.Root>
         </SimpleGrid>
-        <Button mt="5" bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={busy} disabled={!admin} onClick={() => post("/api/warp-settings", { warp_settings: warpSettings }, "WARP registration settings saved.")}>Save registration settings</Button>
+        <Button mt="5" bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={busy} disabled={!admin} onClick={() => post("/api/warp-settings", { warp_settings: warpSettings }, "WARP device details saved.")}>Save device details</Button>
       </GlassCard>
 
       <GlassCard p={{ base: "5", md: "7" }} mt="5">
-        <Heading color="gray.50" size="md">Protected generator defaults</Heading>
-        <Text color="gray.300" mt="3" maxW="4xl">DNS, MTU, allowed IPs, endpoint, keepalive, and key material remain controlled by the pinned generator. Only the WARP registration identity above is editable.</Text>
+        <Heading color="gray.50" size="md">Other settings</Heading>
+        <Text color="gray.300" mt="3" maxW="4xl">DNS, routing, network ports, and key settings follow the pinned generator defaults and cannot be changed here.</Text>
       </GlassCard>
+
+      <Dialog.Root open={confirmFilenameOpen} onOpenChange={event => setConfirmFilenameOpen(event.open)}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content bg="gray.900" color="gray.100" borderWidth="1px" borderColor="gray.700" rounded="2xl" boxShadow="0 24px 80px rgba(0,0,0,0.5)">
+              <Dialog.Header><Dialog.Title>Are you sure?</Dialog.Title></Dialog.Header>
+              <Dialog.Body>
+                <Text>Change the managed filename to <strong>{filename.trim() || "(empty)"}</strong>?</Text>
+                <Text color="gray.400" mt="3">The new file must already contain a valid WireGuard config. This changes the file the manager updates; it does not change the path used by your VPN container.</Text>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <Button variant="outline" color="gray.100" borderColor="gray.600" disabled={busy} onClick={() => setConfirmFilenameOpen(false)}>Go back</Button>
+                <Button bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={busy} onClick={confirmFilenameChange}>Yes, change filename</Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </>
   );
 }
