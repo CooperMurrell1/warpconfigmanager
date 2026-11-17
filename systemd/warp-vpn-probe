@@ -21,27 +21,41 @@ restarted_count=0
 if [ -n "$EXPECTED_KEY" ]; then config_loaded=false; fi
 
 probe_ip() {
-  probe_status=0
   if docker exec qbittorrentvpn sh -c 'command -v curl >/dev/null 2>&1'; then
-    value=$(docker exec qbittorrentvpn curl --fail --silent --show-error --max-time 10 https://api.ipify.org 2>/dev/null) || probe_status=$?
+    probe_tool=curl
   elif docker exec qbittorrentvpn sh -c 'command -v wget >/dev/null 2>&1'; then
-    value=$(docker exec qbittorrentvpn wget -qO- -T 10 https://api.ipify.org 2>/dev/null) || probe_status=$?
+    probe_tool=wget
   else
-    value=""
-    probe_status=127
-  fi
-  if [ "$probe_status" -eq 127 ]; then
     message=vpn-probe-tool-missing
     return 1
   fi
-  if [ "$probe_status" -ne 0 ]; then
+
+  attempt=0
+  saw_invalid=false
+  while [ "$attempt" -lt 5 ]; do
+    probe_status=0
+    value=""
+    if [ "$probe_tool" = curl ]; then
+      value=$(docker exec qbittorrentvpn curl -4 --fail --silent --show-error --max-time 15 https://api.ipify.org 2>/dev/null) || probe_status=$?
+    else
+      value=$(docker exec qbittorrentvpn wget -4 -qO- -T 15 https://api.ipify.org 2>/dev/null) || probe_status=$?
+    fi
+    if [ "$probe_status" -eq 0 ]; then
+      case "$value" in
+        ''|*[!0-9.]*) saw_invalid=true ;;
+        *) ip="$value"; return 0 ;;
+      esac
+    fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -ge 5 ] || sleep 2
+  done
+
+  if [ "$saw_invalid" = true ]; then
+    message=tunnel-ip-probe-invalid-response
+  else
     message=tunnel-ip-probe-command-failed
-    return 1
   fi
-  case "$value" in
-    ''|*[!0-9a-fA-F:.]*) message=tunnel-ip-probe-invalid-response; return 1 ;;
-    *) ip="$value"; return 0 ;;
-  esac
+  return 1
 }
 
 key_is_loaded() {

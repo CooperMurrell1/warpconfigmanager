@@ -35,8 +35,8 @@ export default function HomePage() {
         <GlassCard p={{ base: "5", md: "7" }} gridColumn={{ lg: "span 2" }} position="relative" overflow="hidden">
           <Box position="absolute" inset="auto -5rem -8rem auto" width="18rem" height="18rem" rounded="full" bg="rgba(34, 211, 238, 0.10)" filter="blur(18px)" />
           <Text color="gray.400" fontWeight="700" fontSize="sm">PUBLIC IP THROUGH ACTIVE TUNNEL</Text>
-          <Heading color={state?.ip?.address ? "cyan.200" : "red.200"} size={{ base: "xl", md: "3xl" }} mt="3" overflowWrap="anywhere">
-            {state?.ip?.address || "Disconnected / unavailable"}
+          <Heading color={state?.ip?.address ? "cyan.200" : "orange.200"} size={{ base: "xl", md: "3xl" }} mt="3" overflowWrap="anywhere">
+            {state?.ip?.address || (state?.ip?.error ? "IP probe unavailable" : "Checking tunnel…")}
           </Heading>
           <Text color={state?.ip?.error ? "red.200" : "gray.300"} mt="4">
             {state?.ip?.error || `Checked ${when(state?.ip?.checked_at)}`}
