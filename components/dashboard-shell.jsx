@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Alert, Box, Button, Container, Flex, HStack, Stack, Text } from "@chakra-ui/react";
+import { Alert, Box, Button, Container, Flex, Heading, HStack, Spinner, Stack, Text } from "@chakra-ui/react";
 import { DashboardProvider, useDashboard } from "@/components/dashboard-context";
 import { ProfileAvatar } from "@/components/profile-avatar";
 
@@ -37,8 +37,46 @@ function NavItem({ item, compact = false }) {
   );
 }
 
+function DashboardLoading() {
+  return (
+    <Box minH="100vh" display="grid" placeItems="center" px="5" py="10" color="gray.100" overflow="hidden">
+      <Box className="dashboard-loading-glow" position="absolute" width="22rem" height="22rem" rounded="full" bg="rgba(34, 211, 238, 0.12)" filter="blur(80px)" />
+      <Box className="dashboard-loading-card" position="relative" width="full" maxW="md" textAlign="center" p={{ base: "7", md: "10" }} rounded="3xl" bg="rgba(15, 23, 42, 0.68)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.2)" backdropFilter="blur(24px)" boxShadow="0 28px 90px rgba(0, 0, 0, 0.42)">
+        <Box position="relative" display="grid" placeItems="center" width="16" height="16" mx="auto" mb="6">
+          <Spinner position="absolute" size="xl" color="cyan.300" borderWidth="2px" />
+          <Box as="img" src="/jellyfin-icon.svg" alt="" width="7" height="7" />
+        </Box>
+        <Text color="cyan.300" fontSize="xs" fontWeight="800" letterSpacing="0.18em">WARP CONFIG MANAGER</Text>
+        <Heading color="gray.50" size="lg" mt="2">Loading your dashboard</Heading>
+        <Text color="gray.400" mt="3">Getting the latest tunnel and schedule information…</Text>
+        <Box className="dashboard-loading-track" position="relative" overflow="hidden" height="1" rounded="full" bg="rgba(148, 163, 184, 0.18)" mt="8">
+          <Box className="dashboard-loading-beam" position="absolute" inset="0 auto 0 0" width="40%" rounded="full" bg="linear-gradient(90deg, transparent, #67e8f9, transparent)" />
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+function DashboardLoadError({ error, refresh, logout }) {
+  return (
+    <Box minH="100vh" display="grid" placeItems="center" px="5" py="10" color="gray.100">
+      <Box width="full" maxW="md" textAlign="center" p={{ base: "7", md: "10" }} rounded="3xl" bg="rgba(15, 23, 42, 0.72)" borderWidth="1px" borderColor="rgba(248, 113, 113, 0.28)" backdropFilter="blur(24px)" boxShadow="0 28px 90px rgba(0, 0, 0, 0.42)">
+        <Heading color="gray.50" size="lg">Dashboard unavailable</Heading>
+        <Text color="red.200" mt="3">{error || "Could not load service state"}</Text>
+        <HStack justify="center" mt="7" gap="3">
+          <Button bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} onClick={() => refresh(true)}>Try again</Button>
+          <Button variant="outline" borderColor="gray.600" color="gray.100" onClick={logout}>Sign out</Button>
+        </HStack>
+      </Box>
+    </Box>
+  );
+}
+
 function ShellContent({ children }) {
-  const { state, error, notice, logout } = useDashboard();
+  const { state, loading, error, notice, logout, refresh } = useDashboard();
+
+  if (loading) return <DashboardLoading />;
+  if (!state) return <DashboardLoadError error={error} refresh={refresh} logout={logout} />;
 
   return (
     <Box minH="100vh" color="gray.100">

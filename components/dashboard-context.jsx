@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 const DashboardContext = createContext(null);
 
@@ -15,24 +15,31 @@ export function when(value) {
 
 export function DashboardProvider({ children }) {
   const [state, setState] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const loadedRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (showLoading = false) => {
+    const shouldShowLoading = showLoading || !loadedRef.current;
+    if (shouldShowLoading) setLoading(true);
     try {
       const response = await fetch("/api/state", { cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not load service state");
       setState(data);
       setError("");
+      loadedRef.current = true;
     } catch (caught) {
       setError(caught.message || "Could not load service state");
+    } finally {
+      if (shouldShowLoading) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    refresh();
+    refresh(true);
     const timer = setInterval(refresh, 10000);
     return () => clearInterval(timer);
   }, [refresh]);
@@ -69,8 +76,8 @@ export function DashboardProvider({ children }) {
   }, []);
 
   const value = useMemo(() => ({
-    state, busy, error, notice, refresh, post, logout, setError, setNotice,
-  }), [state, busy, error, notice, refresh, post, logout]);
+    state, loading, busy, error, notice, refresh, post, logout, setError, setNotice,
+  }), [state, loading, busy, error, notice, refresh, post, logout]);
 
   return <DashboardContext.Provider value={value}>{children}</DashboardContext.Provider>;
 }
