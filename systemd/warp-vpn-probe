@@ -97,15 +97,8 @@ elif [ "$ACTION" = activate-config ]; then
       message=vpn-container-restart-failed
     else
       restarted_count=1
-      ready=false
-      attempt=0
-      while [ "$attempt" -lt 90 ]; do
-        state=$(docker inspect --format '{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' qbittorrentvpn 2>/dev/null || true)
-        case "$state" in 'true healthy'|'true none') ready=true; break ;; esac
-        attempt=$((attempt + 1))
-        sleep 1
-      done
-      if [ "$ready" != true ]; then
+      vpn_running=$(docker inspect --format '{{.State.Running}}' qbittorrentvpn 2>/dev/null || true)
+      if [ "$vpn_running" != true ]; then
         ok=false
         message=vpn-container-not-ready
       else
