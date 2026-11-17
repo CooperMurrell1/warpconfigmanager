@@ -521,6 +521,16 @@ def prune_archives():
             try: (ARCHIVE_DIR / (config_id + ".conf")).unlink()
             except FileNotFoundError: pass
         if ids: conn.executemany("DELETE FROM saved_configs WHERE id=?", [(item,) for item in ids])
+        incomplete = conn.execute("SELECT id FROM saved_configs WHERE dns IS NULL OR mtu IS NULL OR allowed_ips IS NULL OR interface_public_key IS NULL").fetchall()
+        for row in incomplete:
+            try:
+                text = (ARCHIVE_DIR / (row["id"] + ".conf")).read_text(encoding="utf-8")
+                details = parse_config(text)
+                public_key = interface_public_key(text)
+                conn.execute("UPDATE saved_configs SET dns=?,mtu=?,allowed_ips=?,keepalive=?,interface_public_key=? WHERE id=?",
+                             (details["dns"], details["mtu"], details["allowed_ips"], details["keepalive"], public_key, row["id"]))
+            except (OSError, UnicodeError, ValueError, RuntimeError, subprocess.SubprocessError):
+                pass
         conn.commit()
         STATE["saved_configs"] = [dict(r) for r in conn.execute("SELECT id,filename,saved_at,expires_at,account_type,account_id,device_id,account_created_at,account_expires_at,interface_public_key,address,endpoint,dns,mtu,allowed_ips,keepalive FROM saved_configs ORDER BY saved_at DESC LIMIT 20").fetchall()]
     write_public_state(STATE)
@@ -566,6 +576,10 @@ def restore_saved_config(config_id):
     except Exception as exc:
         rollback_reactivated = False
         if installed and previous:
+            with STATE_LOCK:
+                STATE["generator_stage"] = "Activation failed; restoring the previous config"
+                save_state(STATE)
+            log_event("warning", "Saved config activation did not complete; restoring the prior config")
             try:
                 install_active_config(previous, "rollback after saved-config activation failure")
                 log_event("warning", "Restored the previous active config after saved-config activation failed")

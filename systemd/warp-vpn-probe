@@ -105,15 +105,23 @@ elif [ "$ACTION" = activate-config ]; then
         ok=false
         message=vpn-container-not-ready
       else
+        restart_pids=""
         for container in $dependents; do
-          if docker restart --time 30 "$container" >/dev/null 2>&1; then
+          (docker restart --time 15 "$container" >/dev/null 2>&1) &
+          restart_pids="$restart_pids $!"
+        done
+        restart_failed=false
+        for restart_pid in $restart_pids; do
+          if wait "$restart_pid"; then
             restarted_count=$((restarted_count + 1))
           else
-            ok=false
-            message=dependent-container-restart-failed
-            break
+            restart_failed=true
           fi
         done
+        if [ "$restart_failed" = true ]; then
+          ok=false
+          message=dependent-container-restart-failed
+        fi
       fi
     fi
   fi
