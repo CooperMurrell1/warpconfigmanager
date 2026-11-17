@@ -218,7 +218,9 @@ def validate_config(text):
 def config_at(path):
     try:
         st = path.lstat()
-        if path.is_symlink() or not path.is_file() or st.st_size > 32768 or st.st_uid != 0 or st.st_mode & 0o077:
+        # Bind-mounted configs may be owned by the VPN container's PUID. The
+        # owner does not need to be root as long as group/other cannot read secrets.
+        if path.is_symlink() or not path.is_file() or st.st_size > 32768 or st.st_mode & 0o077:
             return None, None
         text = path.read_text(encoding="utf-8")
         return text, validate_config(text)
@@ -228,6 +230,35 @@ def config_at(path):
 
 def active_config():
     return config_at(ACTIVE)
+
+
+def config_unusable_reason(path):
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        return "file is missing"
+    except OSError:
+        return "file metadata cannot be read"
+    if path.is_symlink():
+        return "file is a symlink"
+    if not path.is_file():
+        return "path is not a regular file"
+    if st.st_size > 32768:
+        return "file is larger than 32 KiB"
+    if st.st_mode & 0o077:
+        return "file permissions expose it to group or other users; set mode 0600"
+    try:
+        text = path.read_text(encoding="utf-8")
+        validate_config(text)
+    except UnicodeError:
+        return "file is not valid UTF-8"
+    except ValueError as exc:
+        return "WireGuard config validation failed: " + str(exc)
+    except subprocess.SubprocessError:
+        return "WireGuard validation command failed or timed out"
+    except OSError:
+        return "file cannot be read or WireGuard tools are unavailable"
+    return "validation failed"
 
 
 def public_details():
@@ -675,7 +706,8 @@ def main():
                 log_event("info", "Active config is outside its %d-second update interval; startup generation queued" % interval)
                 threading.Thread(target=run_update, args=("startup",), daemon=True).start()
     else:
-        log_event("warning", "No usable active config found; startup generation queued")
+        reason = config_unusable_reason(ACTIVE)
+        log_event("warning", "No usable active config (%s); startup generation queued" % reason)
         threading.Thread(target=run_update, args=("startup",), daemon=True).start()
     threading.Thread(target=scheduler_loop, daemon=True).start()
     threading.Thread(target=probe_loop, daemon=True).start()
