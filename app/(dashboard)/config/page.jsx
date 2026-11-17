@@ -71,6 +71,27 @@ export default function ConfigPage() {
       </GlassCard>
 
       <GlassCard p={{ base: "5", md: "7" }} mb="5">
+        <Heading color="gray.50" size="md" mb="6">WARP service and account</Heading>
+        <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} gap={{ base: "6", md: "8" }}>
+          <Detail label="Provider">{state?.warp_service?.provider || "Cloudflare WARP"}</Detail>
+          <Detail label="Generator">{state?.warp_service?.generator || "wireguard-warp-generator"}</Detail>
+          <Detail label="Generator version">{state?.warp_service?.generator_commit || "Not available"}</Detail>
+          <Detail label="WARP device type">{state?.warp_settings?.device_type || "Linux"}</Detail>
+          <Detail label="Registration locale">{state?.warp_settings?.locale || "en_US"}</Detail>
+          <Detail label="Registered device name">{state?.warp_settings?.device_name || "Not set"}</Detail>
+          <Detail label="Registered device model">{state?.warp_settings?.device_model || "Not set"}</Detail>
+          <Detail label="Account type">{state?.warp_account?.account_type || "Collected after next successful generation"}</Detail>
+          <Detail label="Account ID">{state?.warp_account?.account_id || "Not collected yet"}</Detail>
+          <Detail label="WARP device ID">{state?.warp_account?.device_id || "Not collected yet"}</Detail>
+          <Detail label="Account created">{state?.warp_account?.created_at || "Not available"}</Detail>
+          <Detail label="Account expiry / TTL">{state?.warp_account?.expires_at || "Not available"}</Detail>
+          <Detail label="Account details collected">{when(state?.warp_account?.collected_at)}</Detail>
+          <Detail label="Registration endpoint">{state?.warp_service?.registration_endpoint || "Not available"}</Detail>
+        </SimpleGrid>
+        <Text color="gray.500" fontSize="xs" mt="5">The account license value, API token, private key, and complete config are never stored in public state or displayed here.</Text>
+      </GlassCard>
+
+      <GlassCard p={{ base: "5", md: "7" }} mb="5">
         <Heading color="gray.50" size="md">Private key</Heading>
         <Text color="gray.400" fontSize="sm" mt="2">Administrator-only. The key is loaded on demand, cleared from this page after 30 seconds, and remains blurred until hovered or focused.</Text>
         {keyError && <Text color="red.200" mt="4">{keyError}</Text>}

@@ -29,6 +29,9 @@ ACTIVE = CONFIG_DIR / DEFAULT_CONFIG_FILENAME
 BACKUP = ACTIVE.with_name(ACTIVE.name + ".last-good")
 GENERATOR = "/usr/local/bin/warp-register.sh"
 INTERVAL_DEFAULT = 86400
+GENERATOR_COMMIT = "d4616f154d654d5c159c193432159240c96614bb"
+WARP_API_ENDPOINT = "https://api.cloudflareclient.com/v0a737/reg"
+DEFAULT_WARP_SETTINGS = {"device_type": "Linux", "locale": "en_US", "device_name": "", "device_model": ""}
 MIN_INTERVAL = 300
 MAX_INTERVAL = 90 * 86400
 STOP = threading.Event()
@@ -108,12 +111,33 @@ def db_session():
     finally:
         conn.close()
 
+def validate_warp_settings(value):
+    if not isinstance(value, dict):
+        raise ValueError("WARP registration settings must be an object")
+    settings = {}
+    device_type = value.get("device_type", DEFAULT_WARP_SETTINGS["device_type"])
+    locale = value.get("locale", DEFAULT_WARP_SETTINGS["locale"])
+    if not isinstance(device_type, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,31}", device_type.strip()):
+        raise ValueError("Device type must be 1 to 32 letters, numbers, spaces, dots, underscores, or hyphens")
+    if not isinstance(locale, str) or not re.fullmatch(r"[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?", locale.strip()):
+        raise ValueError("Locale must look like en_US or en")
+    settings["device_type"] = device_type.strip()
+    settings["locale"] = locale.strip()
+    for key, label in (("device_name", "Device name"), ("device_model", "Device model")):
+        item = value.get(key, "")
+        if not isinstance(item, str) or len(item.strip()) > 64 or any(ord(char) < 32 or ord(char) == 127 for char in item):
+            raise ValueError(label + " must be 64 characters or fewer and contain no control characters")
+        settings[key] = item.strip()
+    return settings
+
+
 def safe_state_default():
     interval = max(MIN_INTERVAL, min(MAX_INTERVAL, INTERVAL_DEFAULT))
     return {"interval_seconds": interval, "last_attempt_at": None, "last_success_at": None,
             "next_run_at": None, "status": "starting", "last_error": None,
             "ip": {"address": None, "checked_at": None, "error": "Not checked yet"},
-            "last_ui_command_id": None, "config_filename": DEFAULT_CONFIG_FILENAME, "pending_apply": False, "history": [], "logs": []}
+            "last_ui_command_id": None, "config_filename": DEFAULT_CONFIG_FILENAME, "pending_apply": False,
+            "warp_settings": dict(DEFAULT_WARP_SETTINGS), "warp_account": None, "history": [], "logs": []}
 
 
 def parse_config(text):
@@ -220,6 +244,9 @@ def write_public_state(state):
               "last_attempt_at": state.get("last_attempt_at"), "last_success_at": state.get("last_success_at"),
               "next_run_at": state.get("next_run_at"), "last_error": state.get("last_error"), "config_filename": state.get("config_filename", DEFAULT_CONFIG_FILENAME),
               "pending_apply": state.get("pending_apply", False), "config": public_details(), "ip": state.get("ip"),
+              "warp_settings": state.get("warp_settings", dict(DEFAULT_WARP_SETTINGS)), "warp_account": state.get("warp_account"),
+              "warp_service": {"provider": "Cloudflare WARP", "generator": "wireguard-warp-generator", "generator_commit": GENERATOR_COMMIT,
+                               "registration_endpoint": WARP_API_ENDPOINT},
               "history": state.get("history", [])[-25:], "logs": state.get("logs", [])[-50:]}
     atomic_write(DATA / "public-state.json", json.dumps(public, separators=(",", ":")), 0o644)
 
@@ -244,6 +271,12 @@ def load_state():
         state["history"] = [dict(r) for r in conn.execute("SELECT started_at,finished_at,result,source,error,duration_seconds FROM update_history ORDER BY id DESC LIMIT 100").fetchall()][::-1]
         state["logs"] = [dict(r) for r in conn.execute("SELECT at,level,message FROM service_logs ORDER BY id DESC LIMIT 200").fetchall()][::-1]
     state["interval_seconds"] = max(MIN_INTERVAL, min(MAX_INTERVAL, int(state.get("interval_seconds", INTERVAL_DEFAULT))))
+    try:
+        state["warp_settings"] = validate_warp_settings(state.get("warp_settings", DEFAULT_WARP_SETTINGS))
+    except ValueError:
+        state["warp_settings"] = dict(DEFAULT_WARP_SETTINGS)
+    if not isinstance(state.get("warp_account"), dict):
+        state["warp_account"] = None
     try:
         state["config_filename"] = validate_config_filename(state.get("config_filename", DEFAULT_CONFIG_FILENAME))
     except ValueError:
@@ -276,14 +309,32 @@ def record_history(entry):
         save_state(STATE)
 
 
-def gen_env():
-    # Keep the upstream script's own defaults. Strip any accidental WARP_* overrides
-    # inherited from the container environment so generated configs remain predictable.
+def gen_env(settings):
+    # Use only the persisted registration identity and prevent container env vars
+    # from silently changing the configured generator behavior.
     env = os.environ.copy()
     for key in tuple(env):
         if key.startswith("WARP_"):
             env.pop(key, None)
+    env["WARP_DEVICE_TYPE"] = settings["device_type"]
+    env["WARP_LOCALE"] = settings["locale"]
     return env
+
+
+def parse_warp_account_info(stderr):
+    fields = {"Account ID": "account_id", "Device ID": "device_id", "Account Type": "account_type",
+              "Created": "created_at", "Expires": "expires_at"}
+    account = {}
+    for line in stderr.splitlines():
+        match = re.match(r"^\s*(Account ID|Device ID|Account Type|Created|Expires):\s*(.*?)\s*$", line)
+        if not match:
+            continue
+        value = re.sub(r"[\x00-\x1f\x7f]", "", match.group(2))[:128].strip()
+        account[fields[match.group(1)]] = None if not value or value == "-" else value
+    if not any(account.get(key) for key in ("account_id", "device_id", "account_type")):
+        return None
+    account["collected_at"] = now()
+    return account
 
 
 def interface_public_key(text):
@@ -297,8 +348,12 @@ def interface_public_key(text):
     return result.stdout.strip()
 
 
-def generate_candidate():
-    cmd = [GENERATOR]
+def generate_candidate(settings):
+    cmd = [GENERATOR, "--info"]
+    if settings.get("device_name"):
+        cmd += ["--name", settings["device_name"]]
+    if settings.get("device_model"):
+        cmd += ["--model", settings["device_model"]]
     try:
         license_key = pathlib.Path("/data/warp_license").read_text(encoding="utf-8").strip()
     except OSError:
@@ -306,17 +361,18 @@ def generate_candidate():
     if license_key:
         cmd += ["--license", license_key]
     try:
-        result = subprocess.run(cmd, env=gen_env(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        result = subprocess.run(cmd, env=gen_env(settings), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, timeout=180, check=False)
     except subprocess.TimeoutExpired:
         raise RuntimeError("Generator timed out after 180 seconds")
     except OSError:
         raise RuntimeError("Generator could not be started")
     if result.returncode != 0:
+        # The upstream script may include API tokens or license data in stderr.
         raise RuntimeError("Generator failed (exit code %d); stderr suppressed to protect secrets" % result.returncode)
     if not result.stdout.strip():
         raise RuntimeError("Generator returned an empty config")
-    return result.stdout
+    return result.stdout, parse_warp_account_info(result.stderr)
 
 
 def host_request(action, expected_public_key=None):
@@ -360,7 +416,7 @@ def run_update(source, lock_acquired=False):
         save_state(STATE)
     log_event("info", "%s update started" % source)
     try:
-        candidate = generate_candidate()
+        candidate, account = generate_candidate(dict(STATE.get("warp_settings", DEFAULT_WARP_SETTINGS)))
         validate_config(candidate)
         candidate_key = interface_public_key(candidate)
         if previous is not None:
@@ -375,6 +431,7 @@ def run_update(source, lock_acquired=False):
             STATE["last_success_at"] = completed
             STATE["last_error"] = None
             STATE["pending_apply"] = False
+            STATE["warp_account"] = account
             try:
                 ipaddress.ip_address(activation.get("ip") or "")
                 STATE["ip"] = {"address": activation["ip"], "checked_at": completed, "error": None}
@@ -489,6 +546,17 @@ def process_ui_command():
                 save_state(STATE)
             log_event("info", "Schedule interval changed to %d seconds" % seconds)
             result = {"id": request_id, "ok": True, "message": "Interval saved"}
+    elif action == "warp-settings":
+        try:
+            settings = validate_warp_settings(command.get("warp_settings"))
+        except ValueError as exc:
+            result = {"id": request_id, "ok": False, "message": str(exc)}
+        else:
+            with STATE_LOCK:
+                STATE["warp_settings"] = settings
+                save_state(STATE)
+            log_event("info", "WARP registration identity settings saved")
+            result = {"id": request_id, "ok": True, "message": "WARP registration settings saved; they apply to the next config generation"}
     elif action == "private-key":
         try:
             if ACTIVE.is_symlink() or not ACTIVE.is_file() or ACTIVE.stat().st_size > 32768:

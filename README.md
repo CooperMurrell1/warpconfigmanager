@@ -4,9 +4,9 @@ A single Docker container for the scheduled WARP config generator, SQLite state,
 
 ## Generator behavior
 
-The image downloads scripts/warp-register.sh from the pinned upstream commit d4616f154d654d5c159c193432159240c96614bb. The script is used as provided. The app strips WARP_* variables from its child environment and invokes the script with its built-in defaults. It suppresses generator stderr because the upstream script can print API responses, tokens, and license information there.
+The image downloads scripts/warp-register.sh from the pinned upstream commit d4616f154d654d5c159c193432159240c96614bb. The script is used as provided. The app strips inherited WARP_* variables, then supplies the saved device type and locale and optional device name/model. It captures the script info output only in memory, persists a small allowlist of account fields (IDs, account type, creation time, and expiry/TTL), and discards raw stderr so API responses, tokens, and license values are never stored or logged.
 
-The defaults in the pinned script include Cloudflare DNS, MTU 1280, full-tunnel Allowed IPs 0.0.0.0/0 and ::/0, no listen port, no persistent keepalive, Linux device type, en_US locale, and the current UTC terms date. The web UI does not edit WireGuard settings. It lets a Jellyfin administrator edit the update interval and the manager's config filename. The interval defaults to 24 hours and both settings persist in SQLite.
+The defaults in the pinned script include Cloudflare DNS, MTU 1280, full-tunnel Allowed IPs 0.0.0.0/0 and ::/0, no listen port, no persistent keepalive, Linux device type, en_US locale, and the current UTC terms date. The settings page lets a Jellyfin administrator edit the update interval, config filename, and WARP registration identity (device type, locale, device name, and device model); all are persisted in SQLite. The identity settings apply to the next generation. The config page shows the pinned generator version and non-secret WARP account and device identifiers captured during registration.
 
 The optional WARP+ license is read from /opt/warp-manager/data/warp_license. Leave it absent or empty for the upstream default registration. If using WARP+, create that file with root ownership and mode 0600, and never commit it.
 
@@ -68,7 +68,7 @@ Generation or validation failures leave the active config and running tunnel unt
 
 Sign in with a Jellyfin administrator account to change the schedule, config filename, or request an update. The password is sent to Jellyfin's internal Users/AuthenticateByName API at http://jellyfin:8096 and is not stored. The Jellyfin access token is kept only in an encrypted, HTTP-only, Secure, 12-hour cookie. Logout asks Jellyfin to revoke it. CSRF and same-origin checks protect state-changing requests. HTTPS is required because the cookie is Secure.
 
-SQLite stores the interval, selected config filename, update status, history, and recent logs. The API and logs never contain WireGuard private or preshared keys, the WARP+ license, Jellyfin tokens, or full config contents.
+SQLite stores the interval, selected config filename, WARP registration identity, non-secret account metadata, update status, history, and recent logs. The API and logs never contain WireGuard private or preshared keys, the WARP+ license value, Jellyfin tokens, or full config contents.
 
 ## Backup and recovery
 

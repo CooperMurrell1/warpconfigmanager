@@ -56,18 +56,22 @@ export default function LoginPage() {
   return (
     <Box minH="100vh" color="gray.100" display="grid" placeItems="center" px="4" py="8">
       <Container maxW="md">
-        <Box bg="rgba(15, 23, 42, 0.70)" borderWidth="1px" borderColor="rgba(148, 163, 184, 0.18)" rounded="3xl" p={{ base: "6", md: "9" }} backdropFilter="blur(24px)" boxShadow="0 28px 90px rgba(0, 0, 0, 0.42)">
+        <Box bg="linear-gradient(145deg, rgba(30, 41, 59, 0.74), rgba(15, 23, 42, 0.62))" borderWidth="1px" borderColor="rgba(226, 232, 240, 0.2)" rounded="3xl" p={{ base: "6", md: "9" }} backdropFilter="blur(32px) saturate(160%)" boxShadow="0 30px 100px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.08)">
           <Stack gap="6">
-            <Box><Text color="cyan.300" fontSize="xs" fontWeight="900" letterSpacing="0.18em">MEDIA NETWORK TOOLS</Text><Heading color="gray.50" mt="2" size="xl">WARP Config Manager</Heading><Text mt="2" color="gray.300">Sign in with your Jellyfin administrator account.</Text></Box>
+            <Box textAlign="center">
+              <Box as="img" src="/jellyfin-icon.svg" alt="Jellyfin" width="16" height="16" mx="auto" mb="4" filter="drop-shadow(0 8px 24px rgba(0, 164, 220, 0.28))" />
+              <Text color="cyan.200" fontSize="xs" fontWeight="800" letterSpacing="0.16em">WARP CONFIG MANAGER</Text>
+              <Heading color="gray.50" mt="2" size="xl">Log in with Jellyfin</Heading>
+              <Text mt="2" color="gray.300">Use your Jellyfin account.</Text>
+            </Box>
             {error && <Alert.Root status="error" rounded="xl" bg="rgba(127, 29, 29, 0.55)" color="red.50"><Alert.Indicator /><Alert.Title>{error}</Alert.Title></Alert.Root>}
             <form onSubmit={submit}>
               <Stack gap="4">
-                <Field.Root required><Field.Label color="gray.200">Jellyfin username</Field.Label><Input autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" /></Field.Root>
-                <Field.Root required><Field.Label color="gray.200">Jellyfin password</Field.Label><Input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" /></Field.Root>
-                <Button type="submit" bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={busy} width="full">Sign in with Jellyfin</Button>
+                <Field.Root required><Field.Label color="gray.200">Username</Field.Label><Input autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" /></Field.Root>
+                <Field.Root required><Field.Label color="gray.200">Password</Field.Label><Input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} bg="rgba(2, 6, 23, 0.68)" borderColor="rgba(148, 163, 184, 0.24)" color="gray.50" /></Field.Root>
+                <Button type="submit" bg="cyan.400" color="gray.950" _hover={{ bg: "cyan.300" }} loading={busy} width="full">Log in with Jellyfin</Button>
               </Stack>
             </form>
-            <Text fontSize="sm" color="gray.400">Your password is sent to Jellyfin for authentication and is never stored by this app.</Text>
           </Stack>
         </Box>
       </Container>
